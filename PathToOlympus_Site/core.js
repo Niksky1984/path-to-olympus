@@ -156,10 +156,27 @@
     return {
       demo: true,
       onAuth(cb) { authCb = cb; setTimeout(() => cb(user), 0); },
-      isAdminUser: (u) => !!(u && !u.anonymous),
       async signInAnon() { if (!user) setUser({ uid: 'demo-david', anonymous: true }); },
-      async signInAdmin(email) { setUser({ uid: 'demo-admin', anonymous: false, email }); },
-      async signOutAdmin() { setUser(null); },
+      // Admin = a device that proved the PIN (demo keeps it in this browser)
+      async adminState(uid) {
+        const sec = JSON.parse(localStorage.getItem('olympus_demo_admin') || '{}');
+        return { ready: !!sec.pinHash, registered: !!(sec.devices || {})[uid], hash: (sec.devices || {})[uid] || null };
+      },
+      async createAdminPin(uid, hash) {
+        const sec = JSON.parse(localStorage.getItem('olympus_demo_admin') || '{}');
+        if (sec.pinHash) throw new Error('A PIN already exists');
+        localStorage.setItem('olympus_demo_admin', JSON.stringify({ pinHash: hash, devices: { [uid]: hash } }));
+      },
+      async registerAdmin(uid, hash) {
+        const sec = JSON.parse(localStorage.getItem('olympus_demo_admin') || '{}');
+        if (sec.pinHash !== hash) throw Object.assign(new Error('Wrong PIN'), { code: 'permission-denied' });
+        sec.devices = { ...(sec.devices || {}), [uid]: hash }; localStorage.setItem('olympus_demo_admin', JSON.stringify(sec));
+      },
+      async changeAdminPin(uid, hash) { localStorage.setItem('olympus_demo_admin', JSON.stringify({ pinHash: hash, devices: { [uid]: hash } })); },
+      async forgetAdmin(uid) {
+        const sec = JSON.parse(localStorage.getItem('olympus_demo_admin') || '{}');
+        delete (sec.devices || {})[uid]; localStorage.setItem('olympus_demo_admin', JSON.stringify(sec));
+      },
       listen(h) { handlers = h; push(); return () => { handlers = null; }; },
       async ensureProfile(today) { if (!db.profile) { db.profile = newProfile(today); save(); } else if (!db.profile.startDate) { db.profile.startDate = today; save(); } },
       saveDraft(date, entries) { db.days[date] = { ...(db.days[date] || {}), date, status: 'PENDING', entries }; save(); },
@@ -214,18 +231,36 @@
     const inc = fb.firestore.FieldValue.increment;
     const root = db.collection('athletes').doc(ATHLETE);
     const col = (n) => root.collection(n);
-    const adminEmail = String(CFG.adminEmail || '').toLowerCase();
+    const adminPin = db.collection('adminPin').doc('main');      // secret: nobody can read it
+    const adminInfo = db.collection('adminState').doc('main');   // public: "a PIN exists"
+    const adminDev = (uid) => db.collection('admins').doc(uid);   // devices that proved the PIN
 
     return {
       demo: false,
       onAuth(cb) { auth.onAuthStateChanged(cb); },
-      isAdminUser: (u) => !!(u && !u.isAnonymous && String(u.email || '').toLowerCase() === adminEmail),
       async signInAnon() { if (!auth.currentUser) await auth.signInAnonymously(); },
-      async signInAdmin(email, password) {
-        const cred = await auth.signInWithEmailAndPassword(email.trim(), password);
-        if (String(cred.user.email).toLowerCase() !== adminEmail) { await auth.signOut(); throw new Error('This account is not the Admin account set in config.js'); }
+      async adminState(uid) {
+        const [info, mine] = await Promise.all([adminInfo.get(), adminDev(uid).get()]);
+        return { ready: info.exists, registered: mine.exists, hash: mine.exists ? mine.data().pinHash : null };
       },
-      async signOutAdmin() { await auth.signOut(); },
+      async createAdminPin(uid, hash) {
+        const b = db.batch();
+        b.set(adminPin, { pinHash: hash });
+        b.set(adminInfo, { ready: true, at: Date.now() });
+        b.set(adminDev(uid), { pinHash: hash, at: Date.now() });
+        await b.commit();
+      },
+      // the security rules accept this only when the hash matches the secret PIN
+      async registerAdmin(uid, hash) { await adminDev(uid).set({ pinHash: hash, at: Date.now() }); },
+      async changeAdminPin(uid, hash) {
+        const others = await db.collection('admins').get();
+        const b = db.batch();
+        b.update(adminPin, { pinHash: hash });
+        others.docs.forEach((d) => { if (d.id !== uid) b.delete(d.ref); });
+        b.set(adminDev(uid), { pinHash: hash, at: Date.now() });
+        await b.commit();
+      },
+      async forgetAdmin(uid) { await adminDev(uid).delete(); },
       listen(h) {
         const warn = (what) => (err) => { console.warn('listen', what, err); S.error = `${what}: ${err.message}`; emit(); };
         const unsubs = [
@@ -328,10 +363,32 @@
 
     backend.onAuth(async (user) => {
       S.user = user;
-      S.isAdmin = backend.isAdminUser(user);
+      S.isAdmin = false; S.adminState = null;
       if (unlisten) { unlisten(); unlisten = null; }
       S.got = { profile: false, plans: false, logs: false };
-      if (user && (role === 'david' || S.isAdmin)) {
+      if (!user) { backend.signInAnon().catch((e) => { S.error = 'Sign-in failed: ' + e.message; emit(); }); emit(); return; }
+      if (role === 'admin') await refreshAdmin();
+      else subscribe(role);
+      emit();
+    });
+
+    setInterval(refreshToday, 30000);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) { refreshToday(); evaluateNow(); } });
+  }
+
+  /** Admin: is this device one that proved the PIN? Then start listening. */
+  async function refreshAdmin() {
+    try { S.adminState = await backend.adminState(S.user.uid); }
+    catch (e) { S.adminState = { ready: true, registered: false, hash: null, error: e.message }; }
+    const was = S.isAdmin;
+    S.isAdmin = !!S.adminState.registered;
+    if (S.isAdmin && !was) subscribe('admin');
+    if (!S.isAdmin && unlisten) { unlisten(); unlisten = null; }
+    emit();
+  }
+
+  function subscribe(role) {
+    if (unlisten) return;
         unlisten = backend.listen({
           profile: (p) => { S.profile = p; S.got.profile = true; emit(); },
           plans: (v) => { S.plans = v; S.got.plans = true; emit(); },
@@ -344,13 +401,6 @@
           guide: (v) => { S.guide = { texts: (v && v.texts) || {} }; emit(); },
         });
         if (role === 'david') backend.ensureProfile(S.today).catch((e) => console.warn('ensureProfile', e));
-      }
-      if (!user && role === 'david') backend.signInAnon().catch((e) => { S.error = 'Sign-in failed: ' + e.message; emit(); });
-      emit();
-    });
-
-    setInterval(refreshToday, 30000);
-    document.addEventListener('visibilitychange', () => { if (!document.hidden) { refreshToday(); evaluateNow(); } });
   }
 
   function refreshToday() {
@@ -467,6 +517,14 @@
     }
     let h = 0; for (const c of text) h = (h * 31 + c.charCodeAt(0)) | 0; return 'x' + h;
   }
+  /** One Admin PIN for all your devices (checked by the server rules), remembered per device after entry. */
+  const ADMIN = {
+    hash: (pin) => sha('olympus-admin:' + pin),
+    remembered: () => !!S.user && localStorage.getItem('olympus_admin_device') === S.user.uid,
+    remember: () => localStorage.setItem('olympus_admin_device', S.user.uid),
+    lock: () => localStorage.removeItem('olympus_admin_device'),
+    refresh: () => refreshAdmin(),
+  };
   const PIN = {
     has: () => !!localStorage.getItem('olympus_pin_hash'),
     async set(pin) { const salt = uid(); localStorage.setItem('olympus_pin_salt', salt); localStorage.setItem('olympus_pin_hash', await sha(salt + ':' + pin)); },
@@ -1029,7 +1087,7 @@
     if (act === 'demo-today') localStorage.setItem('olympus_demo_offset', '0');
     if (act === 'demo-wipe') {
       if (!confirm('Wipe all demo data (plans, days, medals)?')) return;
-      backend.wipe(); PIN.clear(); location.reload(); return;
+      backend.wipe(); PIN.clear(); localStorage.removeItem('olympus_demo_admin'); ADMIN.lock(); location.reload(); return;
     }
     lastEvalDay = null;
     refreshToday();
@@ -1040,7 +1098,7 @@
   window.Olympus = {
     E, C, S, start, onChange, emit, loaded, esc, fmtDate, fmtMillis, fmtNum, n0, clamp,
     profile, planForDate, startDate, todayPlan, todayLog, todayClosed, todayEntries, todayRows, todayStats, baseline, planTarget, ghost, target, currentBlock, week, earnedIds,
-    updateEntry, addExtra, removeExtra, closeToday, photoToDataURL, saveAvatarPhoto, adminOp, PIN, toast,
+    updateEntry, addExtra, removeExtra, closeToday, photoToDataURL, saveAvatarPhoto, adminOp, PIN, ADMIN, toast,
     backend: () => backend,
     laurelSVG, avatarHTML, medalSVG, coatSVG, emblemSVG, lineChartSVG, rawUrl, mediaURL, awardArt, targetLine,
     bar, labeled, section, videoURL, levelBadge, setsEditorHTML, setsEdit, horizonsCard, calendarCard, dayDetailHTML, totalsCard, trendsCard, trajectoryCard, exerciseMediaHTML, exerciseMediaURL, guideText,
