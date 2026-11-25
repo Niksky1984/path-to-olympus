@@ -125,3 +125,6 @@ AGORA — the "Hail, David!" window (16:9)
   video_hero.mp4   16:9 MP4, plays silently on a loop (e.g. 1280×720, short, small file)
   hero_bg.webp     16:9 picture or GIF used when there is no video
   Keep the lower half calm: name, day and score are printed over it (on a phone the text covers about the bottom 45%).
+
+OPTIONAL VIDEO
+  video_day_incomplete.mp4   9:16, plays when David closes a day below 100% (if missing, video_day_passed.mp4 plays)
