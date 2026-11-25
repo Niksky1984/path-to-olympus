@@ -712,7 +712,10 @@
     }
     return videoURL(keys[0]);
   }
-  const videoURL = (key) => (S.media.slots['video_' + key] ? rawUrl(S.media.slots['video_' + key]) : `media/video_${key}.mp4`);
+  /** File names that differ from video_<key>.mp4 */
+  const VIDEO_FILE = { hero: 'home_screen' };
+  const videoFile = (key) => `media/${VIDEO_FILE[key] || 'video_' + key}.mp4`;
+  const videoURL = (key) => (S.media.slots['video_' + key] ? rawUrl(S.media.slots['video_' + key]) : videoFile(key));
 
   /** Medal or coat of arms: the Admin's image/GIF if present, otherwise the drawn one. */
   function awardArt(kind, id, earned, size, seed = 0) {
@@ -1141,7 +1144,7 @@
     updateEntry, addExtra, removeExtra, closeToday, photoToDataURL, saveAvatarPhoto, adminOp, PIN, ADMIN, toast,
     backend: () => backend,
     laurelSVG, avatarHTML, medalSVG, coatSVG, emblemSVG, lineChartSVG, rawUrl, mediaURL, awardArt, targetLine,
-    bar, labeled, section, videoURL, levelBadge, setsEditorHTML, setsEdit, horizonsCard, calendarCard, dayDetailHTML, totalsCard, trendsCard, trajectoryCard, exerciseMediaHTML, exerciseMediaURL, guideText,
+    bar, labeled, section, videoURL, videoFile, levelBadge, setsEditorHTML, setsEdit, horizonsCard, calendarCard, dayDetailHTML, totalsCard, trendsCard, trajectoryCard, exerciseMediaHTML, exerciseMediaURL, guideText,
     modal, closeModal, demoBarHTML, demoAction,
     MOTTO: 'The road is mastered by the one who walks it.',
   };
