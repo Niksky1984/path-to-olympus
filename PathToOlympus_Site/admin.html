@@ -222,12 +222,13 @@
 
   function slot(key, label, hint, kind = 'img') {
     const link = S.media.slots[key] || '';
-    const url = kind === 'video' ? (link ? O.rawUrl(link) : `media/${key}.mp4`) : O.mediaURL(key);
+    const file = kind === 'video' ? O.videoFile(key.replace(/^video_/, '')) : `media/${key}.png`;
+    const url = kind === 'video' ? (link ? O.rawUrl(link) : file) : O.mediaURL(key);
     const thumb = kind === 'video'
       ? `<div class="thumb tall"><video src="${esc(url)}" muted playsinline preload="metadata" onerror="this.replaceWith(document.createTextNode('no video'))"></video></div>`
       : `<div class="thumb">${url ? `<img src="${esc(url)}" alt="">` : 'empty'}</div>`;
     return `<div class="slot">${thumb}<div class="meta"><b>${esc(label)}</b> <span class="muted tiny">${hint}</span><br>
-      <span class="muted tiny">file: </span><code>media/${key}.${kind === 'video' ? 'mp4' : 'png'}</code>
+      <span class="muted tiny">file: </span><code>${file}</code>
       <div class="row"><input id="m-${key}" value="${esc(link)}" placeholder="or paste a link (GitHub link is fine)"><button class="btn-text" data-act="media" data-key="${key}">Save</button>${link ? `<button class="btn-text danger-text" data-act="media-clear" data-key="${key}">✕</button>` : ''}</div></div></div>`;
   }
 
