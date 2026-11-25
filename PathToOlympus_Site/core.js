@@ -478,8 +478,10 @@
     backend.closeDay(r, best, medals.concat(coats));
     queued.add('closed_' + S.today);
     const line = `+${r.points} points · ${r.pct}% of the plan · Streak ${r.newStreak} ${r.newStreak === 1 ? 'day' : 'days'}`;
+    // every closed day gets its video, then the % ring. Below 100% it uses video_day_incomplete.mp4 if you add one, else day_passed.
     if (r.complete) enqueue({ type: 'video', id: 'closed_' + S.today, key: 'day_passed', title: 'Day Passed!', subtitle: line });
-    else enqueue({ type: 'summary', id: 'closed_' + S.today, title: 'Day Closed', subtitle: line, pct: r.pct });
+    else enqueue({ type: 'video', id: 'closed_' + S.today, key: 'day_incomplete', fallback: 'day_passed', title: 'Day Closed', subtitle: line });
+    enqueue({ type: 'summary', id: 'ring_' + S.today, title: r.complete ? 'Day Passed!' : 'Day Closed', subtitle: line, pct: r.pct });
   }
 
   /** Read a photo from the phone, crop it square and shrink it (≈20–40 KB) so it fits in the database. */
@@ -677,6 +679,23 @@
     };
     tryNext();
     return null;
+  }
+  /** Wait (briefly) until we know whether a media slot has a picture, so pop-ups show the real art. */
+  function whenMedia(key, ms = 3000) {
+    return new Promise((res) => {
+      const t0 = Date.now();
+      const tick = () => { const u = mediaURL(key); if (u || mediaCache[key] === null || Date.now() - t0 > ms) res(u); else setTimeout(tick, 60); };
+      tick();
+    });
+  }
+  /** First video that exists among the keys (an Admin link counts as existing). */
+  async function pickVideo(keys) {
+    keys = keys.filter(Boolean);
+    for (const k of keys) {
+      if (S.media.slots['video_' + k]) return videoURL(k);
+      try { const r = await fetch(videoURL(k), { method: 'HEAD' }); if (r.ok) return videoURL(k); } catch (e) { /* try the next */ }
+    }
+    return videoURL(keys[0]);
   }
   const videoURL = (key) => (S.media.slots['video_' + key] ? rawUrl(S.media.slots['video_' + key]) : `media/video_${key}.mp4`);
 
@@ -1005,6 +1024,11 @@
       return;
     }
 
+    if (c.type === 'medal' && !c.artReady) {
+      // make sure the uploaded medal picture is known before showing it
+      whenMedia('medal_' + c.award.id).then(() => { queue.unshift({ ...c, artReady: true }); showNext(); });
+      return;
+    }
     if (c.type === 'medal') {
       el.className = 'cel medal-reveal';
       el.innerHTML = `<div class="mr"><div class="eyebrow">MEDAL EARNED</div><div class="pop">${awardArt('MEDAL', c.award.id, true, 200, E.MEDALS.findIndex((m) => m.id === c.award.id))}</div>
@@ -1014,7 +1038,6 @@
       return;
     }
 
-    const src = videoURL(c.key);
     const failed = c.key === 'day_failed';
     el.className = 'cel' + (failed ? ' failed' : '');
     el.innerHTML = `<div class="stage">
@@ -1044,13 +1067,15 @@
     };
     v.onerror = placeholder;
     v.onended = finish;
-    v.src = src;
-    v.play().catch(() => {
-      v.muted = true;
-      v.play().then(() => {
-        sound.classList.remove('hidden');
-        sound.onclick = () => { v.muted = false; sound.classList.add('hidden'); };
-      }).catch(() => { if (!ended && v.isConnected && v.error) placeholder(); });
+    pickVideo([c.key, c.fallback]).then((src) => {
+      v.src = src;
+      v.play().catch(() => {
+        v.muted = true;
+        v.play().then(() => {
+          sound.classList.remove('hidden');
+          sound.onclick = () => { v.muted = false; sound.classList.add('hidden'); };
+        }).catch(() => { if (!ended && v.isConnected && v.error) placeholder(); });
+      });
     });
   }
 
