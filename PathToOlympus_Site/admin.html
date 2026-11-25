@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#5E3815">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Olympus · Council</title>
+<link rel="manifest" href="admin.webmanifest">
+<link rel="icon" href="icons/favicon.png">
+<link rel="apple-touch-icon" href="icons/admin-192.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app"></div>
+
+<script src="config.js"></script>
+<script src="engine.js"></script>
+<script src="core.js"></script>
+<script>
+/* =============================================================================
+ * Admin console: login → PIN → Overview · Plans · Orders · Targets · Settings
+ * ========================================================================== */
+(function () {
+  'use strict';
+  const O = window.Olympus, E = O.E, S = O.S, esc = O.esc;
+
+  const A = {
+    sub: 'overview',
+    unlocked: sessionStorage.getItem('olympus_admin_unlocked') === '1',
+    busy: false,
+    planDraft: null,
+    openDay: 'MONDAY',
+    targetDrafts: {},
+    scDraft: null,
+    mediaOpen: 'exercises',
+    month: null,
+    metric: 'POINTS',
+    settings: null,
+  };
+  const blankDay = () => ({ targetMinutes: 0, note: '', exercises: [] });
+  const clone = (x) => JSON.parse(JSON.stringify(x));
+
+  /* ------------------------------- shell ------------------------------- */
+
+  function topbar() {
+    const p = O.profile();
+    const showLock = S.isAdmin && A.unlocked;
+    return `<header class="topbar"><div class="in">${O.laurelSVG(34, O.C.gold)}
+      <div class="grow"><h1>COUNCIL OF OLYMPUS</h1><div class="motto">${S.isAdmin && A.unlocked && O.loaded() ? `${esc(p.name)}: ${O.n0(p.score)} pts · streak ${O.n0(p.currentStreak)} · ${O.n0(p.daysDone)} done / ${O.n0(p.daysLost)} lost` : O.MOTTO}</div></div>
+      ${showLock ? '<button class="back" data-act="lock" aria-label="Lock">🔒</button>' : ''}
+    </div><div class="meander"></div></header>${O.demoBarHTML()}${S.error ? `<div class="error-bar">${esc(S.error)}</div>` : ''}`;
+  }
+
+  /* ------------------------------ login / PIN ------------------------------ */
+
+  function login() {
+    return `<div class="card" style="margin-top:20px"><div class="center">${O.laurelSVG(100)}<h2>Admin sign-in</h2>
+      <p class="muted small">${S.demo ? 'Demo mode: any e-mail and password work.' : 'Use the Admin account from Firebase Authentication.'} Choose a 4–8 digit PIN for quick access on this device.</p></div>
+      <label class="field"><span>Admin e-mail</span><input id="lg-email" type="email" autocomplete="username" value="${esc(window.OLYMPUS_CONFIG.adminEmail || '')}"></label>
+      <label class="field"><span>Password</span><input id="lg-pass" type="password" autocomplete="current-password"></label>
+      <label class="field"><span>New PIN</span><input id="lg-pin" type="password" inputmode="numeric" maxlength="8"></label>
+      <button class="btn-gold" data-act="login" ${A.busy ? 'disabled' : ''}>${A.busy ? 'Signing in…' : 'Enter the council'}</button></div>`;
+  }
+
+  function pinScreen() {
+    const creating = !O.PIN.has();
+    return `<div class="card center" style="margin-top:30px"><div style="font-size:40px">🔒</div><h2>${creating ? 'Create an Admin PIN' : 'Enter Admin PIN'}</h2>
+      <label class="field" style="max-width:220px;margin:14px auto"><input id="pin" type="password" inputmode="numeric" maxlength="8" style="text-align:center;font-size:22px;letter-spacing:.3em"></label>
+      <button class="btn-gold" data-act="${creating ? 'pin-set' : 'pin-check'}" style="max-width:220px;margin:0 auto">${creating ? 'Set PIN' : 'Unlock'}</button>
+      <p><button class="btn-text" data-act="signout">Use a different account</button></p></div>`;
+  }
+
+  /* -------------------------------- overview -------------------------------- */
+
+  function overview() {
+    const p = O.profile();
+    const plan = O.todayPlan(), log = O.todayLog();
+    let today;
+    if (log && log.status === 'DONE') today = `<span class="${log.complete === false ? 'warn' : 'ok'}">Closed · ${O.n0(log.pct)}% · +${O.fmtNum(log.points)} pts</span>`;
+    else {
+      const st = E.dayStats(plan, (log && log.entries) || [], S.scoring);
+      today = !plan || E.isRest(plan) ? `No plan today${st.points ? ` · ${O.fmtNum(st.points)} pts logged` : ''}` : `In progress: ${O.fmtNum(st.points)} / ${O.fmtNum(st.planned)} pts (${st.pct}%) · ${st.minutes}/${st.plannedMinutes} min`;
+    }
+    return `<div class="card"><div class="row">${O.avatarHTML(p, 64)}<div class="grow"><h3>${esc(p.name)}</h3>
+        <div class="small">Glory <b>${O.fmtNum(p.score)}</b> · streak <b>${O.n0(p.currentStreak)}</b> (best ${O.n0(p.bestStreak)})</div>
+        <div class="small muted">Journey started ${p.startDate ? O.fmtDate(p.startDate) : '— (starts when David first opens his app)'}</div></div></div>
+        <p class="small" style="margin-top:10px"><b>Today:</b> ${today} <button class="btn-text" data-act="day" data-date="${S.today}">Details</button></p></div>`
+      + O.calendarCard(A.month) + O.totalsCard() + O.trendsCard(A.metric) + O.trajectoryCard() + O.horizonsCard();
+  }
+
+  /* ------------------------------- day editor ------------------------------- */
+
+  function stepper(label, value, attrs, step, min, max) {
+    return `<div class="stepper"><label>${esc(label)}</label><div class="box">
+      <button ${attrs} data-d="${-step}" ${value <= min ? 'disabled' : ''}>−</button><b>${value}</b>
+      <button ${attrs} data-d="${step}" ${value >= max ? 'disabled' : ''}>+</button></div></div>`;
+  }
+
+  /** One day of the weekly plan: exercises with level, reps per set, sets and minutes. */
+  function dayEditor(day, k) {
+    const at = (act, extra = '') => `data-act="${act}" data-k="${k}" ${extra}`;
+    const pts = E.plannedPoints(day, S.scoring), mins = E.plannedMinutes(day);
+    let html = `<p class="small"><b>${O.fmtNum(pts)} points</b> · ${mins} minutes planned</p>`;
+    (day.exercises || []).forEach((p, i) => {
+      const info = E.EX[p.exercise];
+      const exPts = E.exercisePoints({ exercise: p.exercise, level: p.level, reps: p.targetReps, sets: p.targetSets, minutes: p.targetMinutes }, S.scoring);
+      html += `<div class="inset"><div class="row"><b class="grow">${esc(info.name)}</b><span class="ex-pts">${O.fmtNum(exPts)} pts</span><button class="btn-text danger-text" ${at('d-rm', `data-i="${i}"`)}>✕</button></div>
+        <div class="levels" style="margin:6px 0">${[1, 2, 3].map((n) => `<button class="${p.level === n ? 'on' : ''}" ${at('d-lv', `data-i="${i}" data-lv="${n}"`)}>${E.lvl(n).roman}</button>`).join('')}</div>
+        <div class="steppers">${stepper(info.unit + ' per set', O.n0(p.targetReps), at('d-tg', `data-i="${i}" data-field="targetReps"`), info.unit === 'seconds' ? 5 : 1, 0, 9999)}
+        ${stepper('sets', O.n0(p.targetSets), at('d-tg', `data-i="${i}" data-field="targetSets"`), 1, 0, 20)}
+        ${stepper('minutes', O.n0(p.targetMinutes), at('d-tg', `data-i="${i}" data-field="targetMinutes"`), 1, 0, 240)}</div></div>`;
+    });
+    const remaining = E.EXERCISES.filter((e) => !(day.exercises || []).some((x) => x.exercise === e.id));
+    if (remaining.length) {
+      html += `<label class="field"><span>Add exercise</span><select data-change="d-add" data-k="${k}"><option value="">＋ Choose…</option>${remaining.map((e) => `<option value="${e.id}">${esc(e.name)}</option>`).join('')}</select></label>`;
+    }
+    html += `<label class="field"><span>Note for David (optional)</span><input data-bind="d-note" data-k="${k}" value="${esc(day.note || '')}"></label>`;
+    if (E.isRest(day)) html += `<p class="muted small">No exercises = rest day (never counted as skipped).</p>`;
+    return html;
+  }
+
+  function dayRef(k) {
+    A.planDraft.days[k] = A.planDraft.days[k] || blankDay();
+    return A.planDraft.days[k];
+  }
+
+  /* --------------------------------- plans --------------------------------- */
+
+  function plansTab() {
+    if (A.planDraft) return planEditor();
+    let activeId = null, best = null;
+    S.plans.forEach((p) => { if (E.planCovers(p, S.today) && (!best || O.n0(p.createdAt) > O.n0(best.createdAt))) best = p; });
+    if (best) activeId = best.id;
+    let html = `<button class="btn-gold" data-act="plan-new">New weekly plan</button><div style="height:14px"></div>`;
+    if (!S.plans.length) html += `<p class="muted">No weekly plans yet. A plan is a 7-day template that repeats automatically for the number of weeks you choose. David logs whatever he really does and closes each day himself.</p>`;
+    S.plans.slice().sort((a, b) => O.n0(b.createdAt) - O.n0(a.createdAt)).forEach((p) => {
+      const weekPts = E.DOW.reduce((a, d) => a + E.plannedPoints(p.days[d], S.scoring), 0);
+      html += `<div class="card"><div class="row"><div class="grow"><h3 style="font-size:16px">${esc(p.name)}</h3>
+        <div class="muted small">${O.fmtDate(p.startDate)} → ${O.fmtDate(E.addDays(E.planEnd(p), -1))} · ${p.repeatWeeks} week(s) · ${O.fmtNum(weekPts)} pts/week</div>
+        ${p.id === activeId ? '<span class="tag active">ACTIVE TODAY</span>' : ''}</div>
+        <button class="btn-text" data-act="plan-edit" data-id="${p.id}">Edit</button><button class="btn-text danger-text" data-act="plan-del" data-id="${p.id}">Delete</button></div></div>`;
+    });
+    return html;
+  }
+
+  function planEditor() {
+    const p = A.planDraft;
+    const weekPts = E.DOW.reduce((a, d) => a + E.plannedPoints(p.days[d], S.scoring), 0);
+    let html = `<div class="card"><label class="field"><span>Plan name</span><input data-bind="p-name" value="${esc(p.name)}"></label>
+      <div class="row"><div class="grow">Starts</div><button class="icon" data-act="p-start" data-d="-7">‹</button><b>${O.fmtDate(p.startDate)}</b><button class="icon" data-act="p-start" data-d="7">›</button></div>
+      <div class="row" style="margin-top:8px"><div class="grow">Repeat for</div>${stepper('weeks', p.repeatWeeks, 'data-act="p-weeks"', 1, 1, 520)}</div>
+      <p class="muted small">Ends ${O.fmtDate(E.addDays(E.planEnd(p), -1))} · <b>${O.fmtNum(weekPts)} points per week</b>. A newer plan covering the same dates takes priority.</p>
+      <button class="btn-line" data-act="p-copy">Copy Monday to every day</button></div>`;
+    E.DOW.forEach((dow) => {
+      const day = p.days[dow] || blankDay();
+      const open = A.openDay === dow;
+      html += `<div class="card"><div class="row" data-act="p-open" data-dow="${dow}" style="cursor:pointer"><h3 class="grow" style="font-size:16px">${dow[0] + dow.slice(1).toLowerCase()}</h3>
+        <span class="muted small">${E.isRest(day) ? 'Rest' : `${day.exercises.length} ex · ${E.plannedMinutes(day)} min · ${O.fmtNum(E.plannedPoints(day, S.scoring))} pts`}</span><span>${open ? '▲' : '▼'}</span></div>
+        ${open ? `<div style="margin-top:10px">${dayEditor(day, dow)}</div>` : ''}</div>`;
+    });
+    html += `<div class="row"><button class="btn-line grow" data-act="plan-cancel" style="min-height:52px">Cancel</button><div class="grow"><button class="btn-gold" data-act="plan-save">Save plan</button></div></div>`;
+    return html;
+  }
+
+  /* -------------------------------- targets -------------------------------- */
+
+  const TFIELDS = [['points', 'Points ≥'], ['minutes', 'Minutes ≥'], ['reps', 'Reps ≥'], ['sets', 'Sets ≥'], ['avgLevel', 'Avg level ≥'], ['maxSkippedPct', 'Skipped days ≤ %'], ['maxMissedPct', 'Missed minutes ≤ %']];
+  const fmtT = (k, v) => (k === 'maxSkippedPct' || k === 'maxMissedPct' ? (E.hasMax(v) ? v + '%' : '–') : k === 'avgLevel' ? (O.n0(v) ? v : '–') : O.n0(v) ? O.fmtNum(v) : '–');
+  const fmtNow = (k, s) => ({ points: O.fmtNum(s.points), minutes: O.fmtNum(s.minutes), reps: O.fmtNum(s.reps), sets: O.fmtNum(s.sets), avgLevel: s.avgLevel ? s.avgLevel.toFixed(1) : '–', maxSkippedPct: (Math.round(s.skippedPct * 10) / 10) + '%', maxMissedPct: (Math.round(s.missedPct * 10) / 10) + '%' })[k];
+
+  function targetsTab() {
+    const b = O.baseline();
+    const one = (x) => (Math.round(x * 10) / 10).toString();
+    let html = `<div class="card">${O.section('Calibration — Month 1')}${O.labeled('Days observed', `${b.elapsedDays} / ${E.RULES.CALIBRATION_DAYS}`, b.elapsedDays / E.RULES.CALIBRATION_DAYS)}
+      <p class="small">David's pace per day: ${one(b.pointsPerDay)} pts · ${one(b.minutesPerDay)} min · ${one(b.repsPerDay)} reps · ${one(b.setsPerDay)} sets · avg level ${one(b.avgLevel)} · skipped ${one(b.skippedPct)}% · missed minutes ${one(b.missedPct)}%</p>
+      <p class="muted small">Each target has three versions. <b>Plan</b> is what your weekly plans ask for (the real target, from the points formula). <b>David</b> is his actual pace (the ghost). <b>Target</b> is what counts. Lock a target in to make it official. Only official targets award coats of arms.</p></div>`;
+    E.HORIZONS.forEach((h) => {
+      const cur = O.target(h.id), stored = S.targets[h.id], plan = O.planTarget(h.id), gh = O.ghost(h.id);
+      const { idx, tot } = O.currentBlock(h.id);
+      const base = cur.state === 'OFFICIAL' ? cur : gh;
+      const dr = A.targetDrafts[h.id] || (A.targetDrafts[h.id] = Object.fromEntries(TFIELDS.map(([k]) => [k, base[k] == null ? '' : base[k]])));
+      const rows = TFIELDS.map(([k, l]) => `<tr><td>${l}</td><td>${fmtT(k, plan[k])}</td><td>${fmtT(k, gh[k])}</td><td>${fmtNow(k, tot)}</td></tr>`).join('');
+      const inputs = TFIELDS.map(([k, l]) => `<label class="field"><span>${l}</span><input inputmode="decimal" data-bind="tg" data-h="${h.id}" data-f="${k}" value="${esc(dr[k])}" placeholder="${k.startsWith('max') ? 'empty = ignore' : '0 = ignore'}"></label>`).join('');
+      html += `<div class="card"><div class="row"><h3 class="grow" style="font-size:16px">${h.title} · per ${h.days} days</h3><span class="tag ${cur.state === 'OFFICIAL' ? 'official' : 'ghost'}">${cur.state}</span></div>
+        <table class="cmp"><tr><th></th><th>Plan</th><th>David</th><th>So far${h.repeats ? ' (' + E.roman(idx + 1) + ')' : ''}</th></tr>${rows}</table>
+        <div class="grid2">${inputs}</div>
+        <div class="row" style="flex-wrap:wrap"><button class="btn-text" data-act="t-fill" data-h="${h.id}" data-src="plan">Use plan</button><button class="btn-text" data-act="t-fill" data-h="${h.id}" data-src="ghost">Use David's pace</button></div>
+        <div class="row" style="flex-wrap:wrap">${cur.state === 'GHOST'
+          ? `<button class="btn-line" data-act="t-save" data-h="${h.id}">Lock in as official</button>`
+          : `<button class="btn-line" data-act="t-save" data-h="${h.id}">Save</button>${stored ? `<button class="btn-text" data-act="t-revert" data-h="${h.id}">${h.master ? 'Back to plan default' : 'Back to ghost'}</button>` : ''}`}</div></div>`;
+    });
+    return html;
+  }
+
+  /* -------------------------------- scoring -------------------------------- */
+
+  function scoringTab() {
+    const sc = A.scDraft || (A.scDraft = clone(S.scoring));
+    const ex = { exercise: 'PULL_UPS', level: 2, reps: 8, sets: 3, minutes: 5 };
+    const exPts = E.exercisePoints(ex, sc);
+    const inp = (path, v, step = '0.1') => `<input inputmode="decimal" data-bind="sc" data-path="${path}" value="${esc(v)}" step="${step}">`;
+    let rows = '';
+    E.EXERCISES.forEach((e) => { rows += `<div>${esc(e.name)} <span class="muted tiny">(per ${e.unit.replace(/s$/, '')})</span></div>${inp('hardness.' + e.id, sc.hardness[e.id])}${inp('unitValue.' + e.id, sc.unitValue[e.id])}`; });
+    return `<div class="card">${O.section('The points formula')}
+        <div class="formula">Exercise points =<br>&nbsp; Hardness × Level ×<br>&nbsp; (Base + reps × sets × Unit value + minutes × Per-minute)<br><br>Day points = sum of all exercises<br>Day % = day points ÷ planned points</div>
+        <p class="small">Example: Pull-ups, Level II, 8 reps × 3 sets, 5 min →
+          ${sc.hardness.PULL_UPS} × ${sc.levelMult[2]} × (${sc.base} + 8×3×${sc.unitValue.PULL_UPS} + 5×${sc.perMinute}) = <b>${O.fmtNum(exPts)} pts</b></p>
+        <p class="muted small">Unit value = what one rep / second / skip / length is worth compared with one pull-up rep. Points are stored when David closes a day, so changing the formula only affects new days.</p></div>
+      <div class="card">${O.section('Exercises')}<div class="num-grid"><span></span><span class="h">Hardness</span><span class="h">Unit value</span>${rows}</div></div>
+      <div class="card">${O.section('Levels & general')}<div class="num-grid">
+        <div>Level I multiplier</div>${inp('levelMult.1', sc.levelMult[1])}<span></span>
+        <div>Level II multiplier</div>${inp('levelMult.2', sc.levelMult[2])}<span></span>
+        <div>Level III multiplier</div>${inp('levelMult.3', sc.levelMult[3])}<span></span>
+        <div>Base points per exercise</div>${inp('base', sc.base, '1')}<span></span>
+        <div>Points per minute</div>${inp('perMinute', sc.perMinute)}<span></span>
+        <div>Skipped-day penalty</div>${inp('penalty', sc.penalty, '1')}<span></span>
+        <div>"Completed" day at % of plan</div>${inp('completeAt', sc.completeAt, '1')}<span></span>
+      </div></div>
+      <div class="row"><button class="btn-line grow" data-act="sc-reset" style="min-height:52px">Reset to defaults</button><div class="grow"><button class="btn-gold" data-act="sc-save">Save formula</button></div></div>`;
+  }
+
+  /* --------------------------------- media --------------------------------- */
+
+  function slot(key, label, hint, kind = 'img') {
+    const link = S.media.slots[key] || '';
+    const url = kind === 'video' ? (link ? O.rawUrl(link) : `media/${key}.mp4`) : O.mediaURL(key);
+    const thumb = kind === 'video'
+      ? `<div class="thumb tall"><video src="${esc(url)}" muted playsinline preload="metadata" onerror="this.replaceWith(document.createTextNode('no video'))"></video></div>`
+      : `<div class="thumb">${url ? `<img src="${esc(url)}" alt="">` : 'empty'}</div>`;
+    return `<div class="slot">${thumb}<div class="meta"><b>${esc(label)}</b> <span class="muted tiny">${hint}</span><br>
+      <span class="muted tiny">file: </span><code>media/${key}.${kind === 'video' ? 'mp4' : 'png'}</code>
+      <div class="row"><input id="m-${key}" value="${esc(link)}" placeholder="or paste a link (GitHub link is fine)"><button class="btn-text" data-act="media" data-key="${key}">Save</button>${link ? `<button class="btn-text danger-text" data-act="media-clear" data-key="${key}">✕</button>` : ''}</div></div></div>`;
+  }
+
+  function mediaTab() {
+    const groups = [
+      ['exercises', 'Exercise images (1:1)', () => E.EXERCISES.map((e) => [1, 2, 3].map((l) => slot(E.imgKey(e.id, l), `${e.name} · ${E.lvl(l).label}`, '1:1 PNG/JPG/WebP')).join('')).join('')],
+      ['gifs', 'Exercise GIFs (1:1, used when there is no image)', () => E.EXERCISES.map((e) => [1, 2, 3].map((l) => slot(E.gifKey(e.id, l), `${e.name} · ${E.lvl(l).label}`, '1:1 GIF')).join('')).join('')],
+      ['chronicle', 'Chronicle: month backgrounds and circles', () => E.UI_SLOTS.months.map(([k, l]) => slot(k, l, 'image or GIF, ~1080×1000')).join('')
+        + E.UI_SLOTS.circles.map(([k, l]) => slot(k, l, '1:1 image or GIF (the day number is printed on top)')).join('')],
+      ['codex', 'Codex (guide page) images', () => slot('guide_header', 'Codex banner', 'wide image or GIF, ~1080×600')
+        + E.GUIDE_SECTIONS.map(([id, t]) => slot('guide_' + id, 'Section · ' + t, 'any ratio, ~1080 wide')).join('')
+        + '<p class="muted small">The Codex shows the exercise images from the "Exercise images" group for each level.</p>'],
+      ['nav', 'Navigation buttons', () => E.UI_SLOTS.nav.map(([k, l]) => slot(k, l, k === 'nav_bg' ? 'wide ~1080×240' : '1:1 transparent, 256×256')).join('')],
+      ['hall', 'Hall of Glory', () => E.UI_SLOTS.hall.map(([k, l]) => slot(k, l, '9:16 image or GIF')).join('')
+        + E.MEDALS.map((m) => slot('medal_' + m.id, 'Medal · ' + m.title, '1:1 image or GIF')).join('')
+        + E.HORIZONS.map((h) => slot('coat_' + h.id.toLowerCase(), 'Coat of arms · ' + h.coat + ' (' + h.title + ')', '1:1 image or GIF')).join('')],
+      ['videos', 'Celebration videos (9:16 MP4, ~10 s)', () => E.VIDEO_KEYS.map((k) => slot('video_' + k, k.replace(/_/g, ' '), '9:16 MP4', 'video')).join('')],
+    ];
+    let html = `<div class="card"><p class="small">Two ways to fill a slot:</p><p class="small">1) Upload a file with exactly the name shown into the <b>media</b> folder of your GitHub repo. For images, .png, .jpg, .webp and .gif all work.</p>
+      <p class="small">2) Paste a direct link and tap Save. A link wins over a file.</p><p class="muted small">Empty slots show a labelled placeholder in David's app.</p></div>`;
+    groups.forEach(([id, title, body]) => {
+      const open = A.mediaOpen === id;
+      html += `<div class="card"><div class="row" data-act="m-open" data-g="${id}" style="cursor:pointer"><div class="grow">${O.section(title)}</div><span>${open ? '▲' : '▼'}</span></div>${open ? body() : ''}</div>`;
+    });
+    return html;
+  }
+
+  /* --------------------------------- guide --------------------------------- */
+
+  function guideTab() {
+    const g = A.guideDraft || (A.guideDraft = { ...S.guide.texts });
+    const area = (key, label, rows = 4) => `<label class="field"><span>${esc(label)}</span><textarea rows="${rows}" data-bind="guide" data-key="${key}" placeholder="${esc(O.guideText(key))}">${esc(g[key] || '')}</textarea></label>`;
+    let html = `<div class="card"><p class="small">This is the text of David's <b>Codex</b> page. Leave a box empty to keep the default text, which is shown greyed out inside the box.
+      Add pictures in <b>Media → Codex</b>. The exercise pictures come from <b>Media → Exercise images</b>.</p></div>`;
+    html += `<div class="card">${O.section('Sections')}${E.GUIDE_SECTIONS.map(([id, t]) => area(id, t, 4)).join('')}</div>`;
+    E.EXERCISES.forEach((x) => {
+      html += `<div class="card">${O.section(x.name)}${[1, 2, 3].map((l) => area(E.guideExKey(x.id, l), `${E.lvl(l).label} — what it means`, 3)).join('')}</div>`;
+    });
+    return html + `<button class="btn-gold" data-act="guide-save">Save Codex text</button>`;
+  }
+
+  /* -------------------------------- settings -------------------------------- */
+
+  function settingsTab() {
+    const p = O.profile();
+    const st = A.settings || (A.settings = { name: p.name, start: p.startDate || S.today });
+    return `<div class="card">${O.section('Athlete')}
+        <label class="field"><span>Name</span><input data-bind="s-name" value="${esc(st.name)}"></label><button class="btn-text" data-act="s-name">Save name</button>
+        <div class="row" style="margin-top:8px"><div class="grow">Journey start</div><button class="icon" data-act="s-start" data-d="-1">‹</button><b>${O.fmtDate(st.start)}</b><button class="icon" data-act="s-start" data-d="1">›</button></div>
+        <p class="muted small">Changing the start re-checks skipped days from the new date. Days already closed or skipped keep their status.</p>
+        <button class="btn-text" data-act="s-start-save" ${st.start === p.startDate ? 'disabled' : ''}>Save start date</button></div>
+      <div class="card">${O.section('Security')}<button class="btn-line" data-act="pin-reset">Change PIN</button> <button class="btn-line danger" data-act="signout">Sign out</button></div>`;
+  }
+
+  /* --------------------------------- render --------------------------------- */
+
+  let pending = false;
+  const typing = () => { const a = document.activeElement; return a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA') && a.id !== 'pin'; };
+
+  function render() {
+    if (!A.month) A.month = S.today.slice(0, 7);
+    const app = document.getElementById('app');
+    let body;
+    if (!S.user || !S.isAdmin) body = login();
+    else if (!A.unlocked) body = pinScreen();
+    else if (!O.loaded()) body = `<div class="empty">${O.laurelSVG(100)}<p>Loading the chronicle…</p></div>`;
+    else {
+      const tabs = [['overview', 'Overview'], ['plans', 'Plans'], ['targets', 'Targets'], ['scoring', 'Scoring'], ['media', 'Media'], ['guide', 'Guide'], ['settings', 'Settings']];
+      const views = { overview, plans: plansTab, targets: targetsTab, scoring: scoringTab, media: mediaTab, guide: guideTab, settings: settingsTab };
+      body = `<div class="subtabs">${tabs.map(([k, l]) => `<button class="${A.sub === k ? 'on' : ''}" data-act="sub" data-sub="${k}">${l}</button>`).join('')}</div><div style="height:12px"></div>${views[A.sub]()}`;
+    }
+    app.innerHTML = topbar() + `<main style="padding-bottom:40px">${body}</main>`;
+    pending = false;
+  }
+  function softRender() { if (typing()) pending = true; else render(); }
+  document.addEventListener('focusout', () => setTimeout(() => { if (pending && !typing()) render(); }, 0));
+
+  /* --------------------------------- events --------------------------------- */
+
+  const val = (id) => (document.getElementById(id) || {}).value || '';
+  const numOrBlank = (v) => { v = String(v).replace(',', '.').trim(); return v === '' || !Number.isFinite(+v) ? '' : +v; };
+
+  document.addEventListener('input', (e) => {
+    const el = e.target, d = el.dataset;
+    if (!d.bind) return;
+    if (d.bind === 'p-name') A.planDraft.name = el.value;
+    else if (d.bind === 'd-note') dayRef(d.k).note = el.value;
+    else if (d.bind === 'tg') A.targetDrafts[d.h][d.f] = el.value;
+    else if (d.bind === 's-name') A.settings.name = el.value;
+    else if (d.bind === 'guide') A.guideDraft[d.key] = el.value;
+    else if (d.bind === 'sc') {
+      const [a, b] = d.path.split('.');
+      const v = numOrBlank(el.value);
+      if (b) A.scDraft[a][b] = v === '' ? 0 : v; else A.scDraft[a] = v === '' ? 0 : v;
+    }
+  });
+
+  document.addEventListener('change', (e) => {
+    const el = e.target, d = el.dataset;
+    if (d.change === 'd-add' && el.value) {
+      const day = dayRef(d.k);
+      day.exercises = (day.exercises || []).concat([{ exercise: el.value, level: 1, targetReps: 10, targetSets: 3, targetMinutes: 5 }]);
+      render();
+    }
+    if (d.bind === 'sc') render(); // refresh the worked example
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && e.target.id === 'pin') document.querySelector('[data-act^="pin-"]')?.click();
+  });
+
+  document.addEventListener('click', async (e) => {
+    const el = e.target.closest('[data-act]');
+    if (!el || el.disabled) return;
+    const d = el.dataset, be = O.backend();
+    switch (d.act) {
+      /* auth */
+      case 'login': {
+        const email = val('lg-email'), pass = val('lg-pass'), pin = val('lg-pin');
+        if (!email || (!S.demo && !pass)) return O.toast('Enter e-mail and password');
+        if (!/^\d{4,8}$/.test(pin)) return O.toast('PIN must be 4–8 digits');
+        A.busy = true; render();
+        try { await be.signInAdmin(email, pass); await O.PIN.set(pin); unlock(); }
+        catch (err) { O.toast('Sign-in failed: ' + err.message); }
+        A.busy = false; render(); return;
+      }
+      case 'pin-set': { const pin = val('pin'); if (!/^\d{4,8}$/.test(pin)) return O.toast('PIN must be 4–8 digits'); await O.PIN.set(pin); unlock(); break; }
+      case 'pin-check': {
+        if (await O.PIN.verify(val('pin'))) { unlock(); break; }
+        O.toast('Wrong PIN'); document.getElementById('pin').value = ''; return;
+      }
+      case 'pin-reset': O.PIN.clear(); lockAdmin(); break;
+      case 'lock': lockAdmin(); break;
+      case 'signout': lockAdmin(); O.PIN.clear(); await be.signOutAdmin(); break;
+
+      /* navigation */
+      case 'sub': A.sub = d.sub; A.settings = null; A.targetDrafts = {}; A.scDraft = null; A.guideDraft = null; window.scrollTo(0, 0); break;
+      case 'guide-save': {
+        const texts = Object.fromEntries(Object.entries(A.guideDraft || {}).map(([k, v]) => [k, String(v || '').trim()]));
+        await O.adminOp('Codex text saved', () => be.saveGuide(texts)); A.guideDraft = null; break;
+      }
+      case 'month': { const [y, m] = A.month.split('-').map(Number); A.month = new Date(Date.UTC(y, m - 1 + +d.dir, 1)).toISOString().slice(0, 7); break; }
+      case 'metric': A.metric = d.metric; break;
+      case 'day': O.modal(O.dayDetailHTML(d.date)); return;
+
+      /* plans */
+      case 'plan-new': {
+        A.planDraft = { id: '', name: 'Week plan', startDate: E.mondayOf(S.today), repeatWeeks: 4, days: Object.fromEntries(E.DOW.map((x) => [x, blankDay()])) };
+        A.openDay = 'MONDAY'; window.scrollTo(0, 0); break;
+      }
+      case 'plan-edit': { const p = S.plans.find((x) => x.id === d.id); if (p) { A.planDraft = clone(p); A.openDay = 'MONDAY'; window.scrollTo(0, 0); } break; }
+      case 'plan-del': {
+        const p = S.plans.find((x) => x.id === d.id);
+        if (p && confirm(`Delete "${p.name}"? Days already closed keep their record.`)) await O.adminOp('Plan deleted', () => be.deletePlan(d.id));
+        break;
+      }
+      case 'plan-cancel': A.planDraft = null; break;
+      case 'plan-save': {
+        const p = { ...A.planDraft, name: (A.planDraft.name || '').trim() || 'Week plan', createdAt: Date.now() };
+        E.DOW.forEach((x) => { const day = p.days[x]; if (day) day.targetMinutes = E.plannedMinutes(day); });
+        if (await O.adminOp('Weekly plan saved', () => be.savePlan(p))) A.planDraft = null;
+        break;
+      }
+      case 'p-start': A.planDraft.startDate = E.addDays(A.planDraft.startDate, +d.d); break;
+      case 'p-weeks': A.planDraft.repeatWeeks = O.clamp(A.planDraft.repeatWeeks + +d.d, 1, 520); break;
+      case 'p-copy': { const mon = clone(A.planDraft.days.MONDAY || blankDay()); E.DOW.forEach((x) => { A.planDraft.days[x] = clone(mon); }); O.toast('Monday copied to every day'); break; }
+      case 'p-open': A.openDay = A.openDay === d.dow ? null : d.dow; break;
+      case 'd-rm': dayRef(d.k).exercises.splice(+d.i, 1); break;
+      case 'd-lv': dayRef(d.k).exercises[+d.i].level = +d.lv; break;
+      case 'd-tg': { const ex = dayRef(d.k).exercises[+d.i]; ex[d.field] = O.clamp(O.n0(ex[d.field]) + +d.d, 0, 9999); break; }
+
+      /* targets */
+      case 't-fill': {
+        const src = d.src === 'plan' ? O.planTarget(d.h) : O.ghost(d.h);
+        A.targetDrafts[d.h] = Object.fromEntries(TFIELDS.map(([k]) => [k, src[k] == null ? '' : src[k]]));
+        break;
+      }
+      case 't-save': {
+        const dr = A.targetDrafts[d.h];
+        const t = { horizon: d.h, state: 'OFFICIAL' };
+        TFIELDS.forEach(([k]) => { const v = numOrBlank(dr[k]); t[k] = k.startsWith('max') ? (v === '' ? null : v) : (v === '' ? 0 : v); });
+        if (E.isEmptyTarget(t)) return O.toast('Fill in at least one value');
+        await O.adminOp(`${E.HZ[d.h].title} target saved`, () => be.saveTarget(t)); delete A.targetDrafts[d.h]; break;
+      }
+      case 't-revert': await O.adminOp(`${E.HZ[d.h].title} target reset`, () => be.deleteTarget(d.h)); delete A.targetDrafts[d.h]; break;
+
+      /* scoring */
+      case 'sc-reset': A.scDraft = clone(E.DEFAULT_SCORING); O.toast('Defaults loaded — tap Save to keep them'); break;
+      case 'sc-save': await O.adminOp('Formula saved', () => be.saveScoring(clone(A.scDraft))); A.scDraft = null; break;
+
+      /* media */
+      case 'm-open': A.mediaOpen = A.mediaOpen === d.g ? null : d.g; break;
+      case 'media': await O.adminOp('Saved', () => be.setMedia(d.key, O.rawUrl(val('m-' + d.key)))); break;
+      case 'media-clear': await O.adminOp('Link removed', () => be.setMedia(d.key, '')); break;
+
+      /* settings */
+      case 's-name': await O.adminOp('Name saved', () => be.updateProfile({ name: (A.settings.name || '').trim() || 'David' })); break;
+      case 's-start': A.settings.start = E.addDays(A.settings.start, +d.d); break;
+      case 's-start-save': await O.adminOp('Journey start saved', () => be.updateProfile({ startDate: A.settings.start, lastEvaluated: null })); break;
+
+      case 'demo-next': case 'demo-today': case 'demo-wipe': O.demoAction(d.act); return;
+      default: return;
+    }
+    render();
+  });
+
+  function unlock() { A.unlocked = true; sessionStorage.setItem('olympus_admin_unlocked', '1'); }
+  function lockAdmin() { A.unlocked = false; sessionStorage.removeItem('olympus_admin_unlocked'); }
+
+  O.onChange(softRender);
+  render();
+  O.start('admin');
+
+  if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => {});
+})();
+</script>
+</body>
+</html>

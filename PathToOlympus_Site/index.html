@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#5E3815">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Path to Olympus</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/favicon.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app"></div>
+
+<script src="config.js"></script>
+<script src="engine.js"></script>
+<script src="core.js"></script>
+<script>
+/* =============================================================================
+ * David's app: Agora (home) · Trial (today's log) · Chronicle · Hall · Avatar
+ * ========================================================================== */
+(function () {
+  'use strict';
+  const O = window.Olympus, E = O.E, S = O.S, esc = O.esc;
+
+  const V = {
+    tab: 'home',            // home | trial | chronicle | hall | avatar
+    month: S.today.slice(0, 7),
+    metric: 'POINTS',
+    edit: null,           // { exId, isNew, draft: {level, reps, sets, minutes} } — the exercise pop-up
+    pick: false,          // "add another exercise" chooser
+    confirmClose: false,  // close-the-day confirmation
+    photoDraft: undefined,  // undefined = unchanged, null = remove, string = new photo
+  };
+
+  /* ------------------------------- shell ------------------------------- */
+
+  function topbar() {
+    const back = V.tab === 'avatar';
+    return `<header class="topbar"><div class="in">
+      ${back ? '<button class="back" data-act="tab" data-tab="home" aria-label="Back">‹</button>' : O.laurelSVG(34, O.C.gold)}
+      <div class="grow"><h1>PATH TO OLYMPUS</h1><div class="motto">${O.MOTTO}</div></div>
+      <button class="avatar-btn" data-act="tab" data-tab="avatar" aria-label="Change avatar">${O.avatarHTML(O.profile(), 44)}</button>
+    </div><div class="meander"></div></header>${O.demoBarHTML()}${S.error ? `<div class="error-bar">${esc(S.error)}</div>` : ''}`;
+  }
+
+  /* Engraved gold icons for the medallions (replaced by media/nav_*.png when present). */
+  const G = '#E9D27F', GD = '#5E3815';
+  const NAV_ICONS = {
+    home: `<svg viewBox="0 0 32 32"><path fill="${G}" d="M16 3 3 10h26z"/><rect fill="${G}" x="4" y="11" width="24" height="2.5"/><g fill="${G}"><rect x="6" y="14.5" width="3" height="10"/><rect x="11.5" y="14.5" width="3" height="10"/><rect x="17.5" y="14.5" width="3" height="10"/><rect x="23" y="14.5" width="3" height="10"/></g><rect fill="${G}" x="3" y="25.5" width="26" height="3"/></svg>`,
+    trial: `<svg viewBox="0 0 32 32"><path fill="${G}" d="M16 2c-6 0-10 4-10 10v6c0 3 1 5 3 7l2 4h3l-1-6c-1-1-2-2-2-4v-3h10v3c0 2-1 3-2 4l-1 6h3l2-4c2-2 3-4 3-7v-6C26 6 22 2 16 2z"/><path fill="${GD}" d="M9 12h5v4H9zM18 12h5v4h-5zM15 12h2v9h-2z"/><path fill="#B0302A" d="M10 1h12l-2 3h-8z"/></svg>`,
+    chronicle: `<svg viewBox="0 0 32 32"><rect fill="${G}" x="7" y="5" width="18" height="22" rx="1"/><circle fill="${G}" cx="7" cy="7" r="3"/><circle fill="${G}" cx="25" cy="25" r="3"/><g stroke="${GD}" stroke-width="1.6"><line x1="11" y1="11" x2="21" y2="11"/><line x1="11" y1="15" x2="21" y2="15"/><line x1="11" y1="19" x2="18" y2="19"/></g></svg>`,
+    codex: `<svg viewBox="0 0 32 32"><path fill="${G}" d="M4 6c4-1.5 8-1.5 11 1v19c-3-2.5-7-2.5-11-1z"/><path fill="${G}" d="M28 6c-4-1.5-8-1.5-11 1v19c3-2.5 7-2.5 11-1z"/><g stroke="${GD}" stroke-width="1.2"><line x1="7" y1="11" x2="12.5" y2="11.6"/><line x1="7" y1="15" x2="12.5" y2="15.6"/><line x1="19.5" y1="11.6" x2="25" y2="11"/><line x1="19.5" y1="15.6" x2="25" y2="15"/></g></svg>`,
+    hall: `<svg viewBox="0 0 32 32"><path fill="${G}" d="M9 4h14v6c0 4-3 7-7 7s-7-3-7-7z"/><path fill="none" stroke="${G}" stroke-width="2" d="M9 7H5c0 4 2 6 5 6M23 7h4c0 4-2 6-5 6"/><rect fill="${G}" x="14.5" y="17" width="3" height="6"/><path fill="${G}" d="M10 23h12l1 5H9z"/></svg>`,
+  };
+
+  function nav() {
+    const bg = O.mediaURL('nav_bg');
+    const t = (id, label) => {
+      const img = O.mediaURL('nav_' + id);
+      return `<button class="${V.tab === id ? 'on' : ''} ${img ? 'has-img' : ''}" data-act="tab" data-tab="${id}" aria-label="${label}">
+        <span class="medallion ${img ? 'has-img' : ''}">${img ? `<img src="${esc(img)}" alt="">` : NAV_ICONS[id]}</span><span class="lbl">${label}</span></button>`;
+    };
+    return `<nav class="tabs ${bg ? 'custom-bg' : ''}"${bg ? ` style="background-image:url('${esc(bg)}')"` : ''}>${t('home', 'Agora')}${t('trial', 'Trial')}${t('chronicle', 'Chronicle')}${t('hall', 'Hall')}${t('codex', 'Codex')}</nav>`;
+  }
+
+  /* -------------------------------- home -------------------------------- */
+
+  function home() {
+    const p = O.profile();
+    const dayNo = E.diffDays(O.startDate(), S.today) + 1;
+    const st = O.todayStats(), closed = O.todayClosed(), log = O.todayLog();
+    const dailyText = closed ? `Closed · ${O.n0(log.pct)}% · +${O.fmtNum(log.points)} pts`
+      : st.planned || st.points ? `${O.fmtNum(st.points)} / ${O.fmtNum(st.planned)} pts · ${st.pct}%` : 'No plan today';
+    const wk = O.week();
+    let html = `<section class="hero">${O.laurelSVG(140, O.C.gold, 0.25)}
+      <h2>Hail, ${esc(p.name)}!</h2><div class="sub">Day ${dayNo.toLocaleString()} of 3,652 on the Path to Olympus</div>
+      <div class="nums"><div><div class="eyebrow">GLORY</div><div class="score">${O.fmtNum(p.score)}</div></div>
+      <div class="streak">🔥 <b>${O.n0(p.currentStreak)}</b><small>day streak · best ${O.n0(p.bestStreak)}</small></div></div></section>`;
+    html += `<div class="card">${O.section('Progress')}${O.labeled('Today', dailyText, closed ? Math.min(1, O.n0(log.pct) / 100) : st.planned ? st.points / st.planned : 0)}${O.labeled('This week', `${wk.done} / ${wk.planned} days closed`, wk.planned ? wk.done / wk.planned : 0)}</div>`;
+
+    const plan = O.todayPlan();
+    html += `<div class="card">${O.section("Today's plan · " + O.fmtDate(S.today, 'day'))}`;
+    if (!plan || E.isRest(plan)) {
+      html += `<p class="muted">${plan ? 'Rest day in the plan' : 'No plan for today'} — but you can still train and close the day.</p>`;
+    } else {
+      html += `<h3 style="font-size:17px">${O.fmtNum(st.planned)} points · ${st.plannedMinutes} minutes</h3>${plan.note ? `<p class="muted small">${esc(plan.note)}</p>` : ''}`;
+      plan.exercises.forEach((ex) => {
+        const info = E.EX[ex.exercise];
+        const done = O.todayEntries().find((e) => e.exercise === ex.exercise && E.isActive(e));
+        html += `<div class="ex-row"><span class="check ${done ? 'on' : ''}">✓</span><div class="grow"><div>${esc(info.name)}</div>
+          <div class="muted small">${O.n0(ex.targetReps)} ${info.unit} × ${O.n0(ex.targetSets)} sets · ${O.n0(ex.targetMinutes)} min</div></div>${O.levelBadge(ex.level)}</div>`;
+      });
+    }
+    html += `<div style="margin-top:12px"><button class="btn-gold" data-act="tab" data-tab="trial">${closed ? 'Day closed — see you tomorrow' : "Log today's training"}</button></div></div>`;
+    return html + `${O.horizonsCard()}<p class="motto-line">“${O.MOTTO}”</p>`;
+  }
+
+  /* -------------------------------- trial -------------------------------- */
+
+  function stepper(label, field, value, step, max) {
+    return `<div class="stepper"><label>${esc(label)}</label><div class="box">
+      <button data-act="ed-step" data-field="${field}" data-d="${-step}" ${value <= 0 ? 'disabled' : ''} aria-label="Less">−</button>
+      <b>${value}</b>
+      <button data-act="ed-step" data-field="${field}" data-d="${step}" ${value >= max ? 'disabled' : ''} aria-label="More">+</button></div></div>`;
+  }
+
+  /** One square per exercise: the plan first, then anything extra David added. */
+  function tile(row, closed) {
+    const p = row.planned, e = row.entry;
+    const exId = p ? p.exercise : e.exercise;
+    const info = E.EX[exId];
+    const level = e ? e.level : p.level;
+    const active = E.isActive(e);
+    const img = O.exerciseMediaURL(exId, level);
+    const sub = active ? `${O.fmtNum(E.exercisePoints(e, S.scoring))} pts · ${O.n0(e.reps)}×${Math.max(1, O.n0(e.sets))}${e.minutes ? ` · ${e.minutes}′` : ''}`
+      : p ? `${O.n0(p.targetReps)}×${O.n0(p.targetSets)} · ${O.n0(p.targetMinutes)}′` : 'not logged';
+    return `<button class="tile ${active ? 'done' : ''} ${p ? '' : 'extra'}" data-act="open-ex" data-ex="${exId}" ${closed ? 'disabled' : ''}>
+      ${img ? `<img src="${esc(img)}" alt="">` : `<span class="t-emblem">${O.laurelSVG(64, O.C.gold, 0.7)}</span>`}<span class="shade"></span>
+      <span class="t-lvl">${p ? E.lvl(level).roman : '+ ' + E.lvl(level).roman}</span><span class="t-ok">✓</span>
+      <span class="t-name">${esc(info.name)}</span><span class="t-sub">${sub}</span></button>`;
+  }
+
+  function trial() {
+    const plan = O.todayPlan();
+    const closed = O.todayClosed();
+    const st = O.todayStats();
+    const rows = O.todayRows();
+    const log = O.todayLog();
+    let html = `<div class="card"><h2 style="font-size:20px">${O.fmtDate(S.today, 'long')}</h2>
+      ${plan && plan.note ? `<p class="muted">${esc(plan.note)}</p>` : ''}
+      <p class="small muted">${closed ? '' : !plan || E.isRest(plan) ? 'No exercises planned today — anything you do still counts. Tap + to add one.' : 'Tap an exercise, enter what you did and press OK. You can change it until you close the day.'}</p>
+      ${closed ? `<p class="ok">Day closed · ${O.n0(log.pct)}% · +${O.fmtNum(log.points)} points. The log is locked.</p>` : ''}</div>`;
+    html += `<div class="tiles">${rows.map((r) => tile(r, closed)).join('')}${closed ? '' : '<button class="tile add" data-act="pick"><b>+</b><span>OTHER</span></button>'}</div>`;
+    const bar = st.planned ? st.points / st.planned : st.points ? 1 : 0;
+    html += `<div class="card">${O.labeled(st.planned ? 'Points vs plan' : 'Points', st.planned ? `${O.fmtNum(st.points)} / ${O.fmtNum(st.planned)} · ${st.pct}%` : `${O.fmtNum(st.points)} pts`, bar)}
+      <div class="muted small" style="margin:-4px 0 10px">Time ${st.minutes} / ${st.plannedMinutes} min · ${st.exercisesDone} exercise(s) logged</div>
+      ${closed ? '' : `<button class="btn-gold" data-act="close-day" ${st.canClose ? '' : 'disabled'}>Close the day</button>
+      ${st.canClose ? '' : '<p class="muted small center">Log at least one exercise to close the day.</p>'}`}</div>`;
+    return html + `<p class="motto-line">“${O.MOTTO}”</p>`;
+  }
+
+  /* ------------------------------ pop-ups ------------------------------ */
+
+  function openEditor(exId) {
+    const row = O.todayRows().find((r) => (r.planned ? r.planned.exercise : r.entry.exercise) === exId);
+    const p = row && row.planned, e = row && row.entry;
+    const base = e || { level: p ? p.level : 1, reps: 0, sets: 0, minutes: 0 };
+    V.edit = { exId, isNew: !row, isExtra: !p, draft: { level: base.level || 1, reps: O.n0(base.reps), sets: O.n0(base.sets), minutes: O.n0(base.minutes) } };
+  }
+
+  function editorSheet() {
+    const ed = V.edit, info = E.EX[ed.exId], d = ed.draft;
+    const plan = O.todayPlan();
+    const p = plan && (plan.exercises || []).find((x) => x.exercise === ed.exId);
+    const entry = { exercise: ed.exId, ...d };
+    const pts = E.exercisePoints(entry, S.scoring);
+    return `<div class="sheet-wrap" data-act="sheet-bg"><div class="sheet">
+      <div class="row"><h3 class="grow">${esc(info.name)}</h3>${p ? O.levelBadge(p.level) : '<span class="extra-tag">EXTRA</span>'}</div>
+      ${O.exerciseMediaHTML(ed.exId, d.level)}
+      <p class="small">${esc(O.guideText(E.guideExKey(ed.exId, d.level)))}</p>
+      ${p ? `<div class="ex-plan">Plan: ${E.lvl(p.level).label} · ${O.n0(p.targetReps)} ${info.unit} × ${O.n0(p.targetSets)} sets · ${O.n0(p.targetMinutes)} min</div>` : ''}
+      <div class="small muted" style="margin-top:10px">Level performed</div>
+      <div class="levels" style="margin-top:4px">${[1, 2, 3].map((n) => `<button class="${d.level === n ? 'on' : ''}" data-act="ed-lv" data-lv="${n}">${E.lvl(n).roman}</button>`).join('')}</div>
+      <div class="steppers">
+        ${stepper(info.unit + ' per set', 'reps', d.reps, info.unit === 'seconds' ? 5 : 1, 9999)}
+        ${stepper('Sets', 'sets', d.sets, 1, 99)}
+        ${stepper('Minutes', 'minutes', d.minutes, 1, 600)}
+      </div>
+      <div class="row small"><span class="grow muted">Total: ${E.isActive(entry) ? O.fmtNum(E.volume(entry)) : 0} ${info.unit}</span><span class="ex-pts">${O.fmtNum(pts)} pts</span></div>
+      ${!ed.isNew && ed.isExtra ? '<button class="btn-text danger-text" data-act="ed-remove">Remove from today</button>' : ''}
+      ${!ed.isNew && !ed.isExtra ? '<button class="btn-text danger-text" data-act="ed-clear">Clear</button>' : ''}
+      <div class="btns"><button class="btn-line" data-act="ed-cancel">Cancel</button><button class="btn-gold" data-act="ed-ok">OK</button></div>
+    </div></div>`;
+  }
+
+  function pickSheet() {
+    const rows = O.todayRows();
+    const left = E.EXERCISES.filter((x) => !rows.some((r) => (r.planned ? r.planned.exercise : r.entry.exercise) === x.id));
+    return `<div class="sheet-wrap" data-act="sheet-bg"><div class="sheet"><h3>Did something else?</h3>
+      <p class="muted small">Choose the exercise you did.</p>
+      <div class="pick-list">${left.map((x) => `<button data-act="pick-ex" data-ex="${x.id}">${esc(x.name)}</button>`).join('') || '<p class="muted">All exercises are already on today\'s list.</p>'}</div>
+      <div class="btns" style="grid-template-columns:1fr"><button class="btn-line" data-act="sheet-close">Cancel</button></div></div></div>`;
+  }
+
+  function confirmSheet() {
+    const st = O.todayStats();
+    const items = O.todayRows().filter((r) => E.isActive(r.entry)).map((r) => {
+      const e = r.entry, info = E.EX[e.exercise];
+      return `<div><span>${esc(info.name)} · ${E.lvl(e.level).roman} · ${O.n0(e.reps)}×${Math.max(1, O.n0(e.sets))} · ${O.n0(e.minutes)} min</span><b>${O.fmtNum(E.exercisePoints(e, S.scoring))}</b></div>`;
+    }).join('');
+    const verdict = st.complete ? '<p class="ok">This will be a COMPLETED day ✓</p>'
+      : `<p class="warn">This will be an INCOMPLETE day (${st.pct}% — ${S.scoring.completeAt}% needed to complete it). Your streak continues.</p>`;
+    return `<div class="sheet-wrap" data-act="sheet-bg"><div class="sheet"><h3>Close the day?</h3>
+      <p class="muted small">After closing, today's log is locked and can't be changed.</p>
+      <div class="confirm-list">${items}</div>
+      <p class="strong">${O.fmtNum(st.points)} points${st.planned ? ` of ${O.fmtNum(st.planned)} planned · ${st.pct}%` : ''} · ${st.minutes} min</p>${verdict}
+      <div class="btns"><button class="btn-line" data-act="sheet-close">Go back</button><button class="btn-gold" data-act="close-confirm">Yes, close it</button></div></div></div>`;
+  }
+
+  /* -------------------------------- codex -------------------------------- */
+
+  function codex() {
+    const sec = (id, title) => {
+      const img = O.mediaURL('guide_' + id);
+      return `<div class="card codex" id="codex-${id}"><h3>${esc(title)}</h3>${img ? `<img class="sec-img" src="${esc(img)}" alt="">` : ''}<p>${esc(O.guideText(id))}</p></div>`;
+    };
+    const header = O.mediaURL('guide_header');
+    let html = `<div class="codex-hero">${header ? `<img class="banner" src="${esc(header)}" alt="">` : O.laurelSVG(110)}<h2>The Codex of Olympus</h2>
+      <p class="muted">Everything you need to know about the road.</p>
+      <div class="toc">${E.GUIDE_SECTIONS.map(([id, t]) => `<button class="chip" data-act="goto" data-id="codex-${id}">${esc(t)}</button>`).join('')}<button class="chip" data-act="goto" data-id="codex-exercises">The eight exercises</button></div></div>`;
+    E.GUIDE_SECTIONS.forEach(([id, t]) => { html += sec(id, t); });
+    html += `<h2 id="codex-exercises" class="center" style="margin:18px 0 10px">The eight exercises</h2>`;
+    E.EXERCISES.forEach((x) => {
+      html += `<div class="card codex"><h3>${esc(x.name)}</h3><div class="muted small">${esc(x.focus)} · counted in ${x.unit}</div>`;
+      [1, 2, 3].forEach((l) => {
+        const img = O.exerciseMediaURL(x.id, l);
+        html += `<div class="lvl-block"><div class="pic">${img ? `<img src="${esc(img)}" alt="">` : `<span>${E.lvl(l).roman}</span>`}</div>
+          <div><b>${E.lvl(l).label}</b><p>${esc(O.guideText(E.guideExKey(x.id, l)))}</p></div></div>`;
+      });
+      html += '</div>';
+    });
+    return html + `<p class="motto-line">“${O.MOTTO}”</p>`;
+  }
+
+  /* ------------------------------ chronicle ------------------------------ */
+
+  const chronicle = () => O.calendarCard(V.month) + O.totalsCard() + O.trendsCard(V.metric) + O.trajectoryCard() + O.horizonsCard();
+
+  /* -------------------------------- hall -------------------------------- */
+
+  function hall() {
+    const earned = Object.fromEntries(S.awards.map((a) => [a.id, a]));
+    let html = `<div class="hall-head"><div class="wreath">${O.laurelSVG(150)}<b>${S.awards.length}</b></div>
+      <h2>Hall of Glory</h2><p class="muted">Every medal is a step of the road you walked yourself.</p></div>`;
+    html += `<div class="card">${O.section('Medals')}<div class="medals">`;
+    E.MEDALS.forEach((m, i) => {
+      const got = earned[m.id];
+      html += `<div class="medal-tile ${got ? '' : 'locked'}">${O.awardArt('MEDAL', m.id, !!got, 84, i)}<h4>${esc(m.title)}</h4><small>${got ? 'Earned ' + O.fmtMillis(got.earnedAt) : esc(m.subtitle)}</small></div>`;
+    });
+    html += `</div></div><div class="card">${O.section('Coats of arms')}`;
+    E.HORIZONS.forEach((h) => {
+      const mine = S.awards.filter((a) => a.horizon === h.id);
+      const t = O.target(h.id), b = O.currentBlock(h.id), ghost = t.state === 'GHOST';
+      html += `<div class="coat-row">${O.awardArt('COAT_OF_ARMS', h.id, mine.length > 0, 72)}<div class="grow">
+        <h4>${esc(h.coat)}</h4><div class="muted small">${mine.length ? `Earned ×${mine.length} · latest ${esc(mine[mine.length - 1].title)}` : `${h.title} target · not yet earned`}</div>
+        ${O.bar(E.progress(t, b.tot), ghost, 'thin')}
+        <div class="muted" style="font-size:11px">${h.repeats ? `${h.title} ${E.roman(b.idx + 1)} in progress` : 'In progress'}${ghost ? ' · ghost target, awaiting calibration' : ''}</div></div></div>`;
+    });
+    return html + `</div><p class="motto-line">“${O.MOTTO}”</p>`;
+  }
+
+  /* ------------------------------- avatar ------------------------------- */
+
+  function avatar() {
+    const p = O.profile();
+    const shown = V.photoDraft === undefined ? p : { ...p, avatarPhoto: V.photoDraft };
+    const changed = V.photoDraft !== undefined;
+    return `<div class="card"><div class="avatar-edit">
+        <h2>Your hero</h2>
+        ${O.avatarHTML(shown, 200)}
+        <p class="muted small center">Choose any picture from your phone. It is cropped to a circle and shown in the top-right corner.</p>
+        <label class="btn-line file-btn">📷 Choose a picture<input type="file" accept="image/*" data-change="photo"></label>
+        ${shown.avatarPhoto ? '<button class="btn-text danger-text" data-act="photo-remove">Remove picture</button>' : ''}
+      </div></div>
+      <button class="btn-gold" data-act="save-avatar" ${changed ? '' : 'disabled'}>Save avatar</button>`;
+  }
+
+  /* ------------------------------- render ------------------------------- */
+
+  function render() {
+    const app = document.getElementById('app');
+    if (!O.loaded()) {
+      app.innerHTML = topbar() + `<div class="loading">${O.laurelSVG(120)}<div>Ascending the mountain…</div></div>`;
+      return;
+    }
+    const views = { home, trial, chronicle, hall, avatar, codex };
+    const bg = V.tab === 'hall' ? O.mediaURL('hall_bg') : null;
+    document.body.classList.toggle('hall-bg', !!bg);
+    document.body.style.backgroundImage = bg ? `url('${bg}')` : '';
+    if (O.todayClosed()) { V.edit = null; V.pick = false; V.confirmClose = false; }
+    const sheet = V.edit ? editorSheet() : V.pick ? pickSheet() : V.confirmClose ? confirmSheet() : '';
+    app.innerHTML = topbar() + `<main>${views[V.tab]()}</main>` + (V.tab === 'avatar' ? '' : nav()) + sheet;
+  }
+
+  /* ------------------------------- events ------------------------------- */
+
+  document.addEventListener('click', (e) => {
+    const el = e.target.closest('[data-act]');
+    if (!el || el.disabled) return;
+    const d = el.dataset;
+    switch (d.act) {
+      case 'tab':
+        if (d.tab === 'avatar') V.photoDraft = undefined;
+        V.tab = d.tab; window.scrollTo(0, 0); break;
+      case 'open-ex': openEditor(d.ex); break;
+      case 'pick': V.pick = true; break;
+      case 'pick-ex': V.pick = false; openEditor(d.ex); break;
+      case 'ed-lv': V.edit.draft.level = +d.lv; break;
+      case 'ed-step': { const dr = V.edit.draft; dr[d.field] = O.clamp(O.n0(dr[d.field]) + +d.d, 0, 9999); break; }
+      case 'ed-ok': { const ed = V.edit; V.edit = null; O.updateEntry(ed.exId, (x) => ({ ...x, ...ed.draft })); return; }
+      case 'ed-clear': { const ex = V.edit.exId; V.edit = null; O.updateEntry(ex, (x) => ({ ...x, reps: 0, sets: 0, minutes: 0 })); return; }
+      case 'ed-remove': { const ex = V.edit.exId; V.edit = null; O.removeExtra(ex); return; }
+      case 'ed-cancel': case 'sheet-close': V.edit = null; V.pick = false; V.confirmClose = false; break;
+      case 'sheet-bg': if (e.target !== el) return; V.edit = null; V.pick = false; V.confirmClose = false; break;
+      case 'close-day': if (O.todayStats().canClose) V.confirmClose = true; break;
+      case 'close-confirm': V.confirmClose = false; O.closeToday(); break;
+      case 'goto': { const t = document.getElementById(d.id); if (t) t.scrollIntoView({ behavior: 'smooth', block: 'start' }); return; }
+      case 'month': {
+        const [y, m] = V.month.split('-').map(Number);
+        V.month = new Date(Date.UTC(y, m - 1 + +d.dir, 1)).toISOString().slice(0, 7); break;
+      }
+      case 'day': O.modal(O.dayDetailHTML(d.date)); return;
+      case 'metric': V.metric = d.metric; break;
+      case 'photo-remove': V.photoDraft = null; break;
+      case 'save-avatar': O.saveAvatarPhoto(V.photoDraft); V.photoDraft = undefined; V.tab = 'home'; break;
+      case 'demo-next': case 'demo-today': case 'demo-wipe': O.demoAction(d.act); return;
+      default: return;
+    }
+    render();
+  });
+
+  document.addEventListener('change', async (e) => {
+    const el = e.target, d = el.dataset;
+    if (d.change === 'photo' && el.files && el.files[0]) {
+      try { V.photoDraft = await O.photoToDataURL(el.files[0]); render(); }
+      catch (err) { O.toast(err.message); }
+    }
+  });
+
+  O.onChange(render);
+  render();
+  O.start('david');
+
+  if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => {});
+})();
+</script>
+</body>
+</html>

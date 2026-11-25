@@ -1,0 +1,38 @@
+rules_version = '2';
+
+// Path to Olympus — Firestore security rules.
+// Replace admin@example.com with the Admin's Firebase Auth e-mail
+// (the same value as adminEmail in config.js).
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function isAdmin()  { return signedIn() && request.auth.token.email == 'admin@example.com'; }
+
+    match /athletes/{athleteId} {
+      // Profile: David's device updates score, streaks and avatar.
+      allow read: if signedIn();
+      allow create, update: if signedIn();
+      allow delete: if isAdmin();
+
+      // Daily logs: written by David's device (drafts, seal, missed-day evaluation).
+      match /days/{date} {
+        allow read, create, update: if signedIn();
+        allow delete: if isAdmin();
+      }
+
+      // Medals: created on seal, "celebrated" flag flipped after the video plays.
+      match /awards/{awardId} {
+        allow read, create, update: if signedIn();
+        allow delete: if isAdmin();
+      }
+
+      // Admin-only configuration.
+      match /plans/{planId}       { allow read: if signedIn(); allow write: if isAdmin(); }
+      match /overrides/{date}     { allow read: if signedIn(); allow write: if isAdmin(); }
+      match /targets/{horizon}    { allow read: if signedIn(); allow write: if isAdmin(); }
+      match /config/{docId}       { allow read: if signedIn(); allow write: if isAdmin(); }
+    }
+  }
+}
