@@ -828,7 +828,16 @@
   }
   const levelBadge = (n) => `<span class="lvl">${E.lvl(n).label}</span>`;
 
-  const fmtNum = (v) => Math.round(n0(v)).toLocaleString();
+  /** Points and big numbers: 950 · 3.96K · 24.5K · 290K · 1.25M */
+  function fmtNum(v) {
+    const n = Math.round(n0(v)), a = Math.abs(n);
+    if (a < 1000) return String(n);
+    const [d, unit] = a < 999500 ? [1e3, 'K'] : [1e6, 'M'];
+    const x = n / d, ax = Math.abs(x);
+    let t = x.toFixed(ax < 10 ? 2 : ax < 100 ? 1 : 0);
+    if (t.includes('.')) t = t.replace(/0+$/, '').replace(/\.$/, '');
+    return t + unit;
+  }
   const pct1 = (v) => (Math.round(n0(v) * 10) / 10) + '%';
 
   /** One line describing a target, e.g. "9,600 pts · 450 min · skipped ≤ 0%". */
