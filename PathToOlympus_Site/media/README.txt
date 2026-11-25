@@ -122,7 +122,7 @@ CELEBRATION VIDEOS (9:16 MP4, about 10 seconds)
 
 
 AGORA — the "Hail, David!" window (16:9)
-  video_hero.mp4   16:9 MP4, plays silently on a loop (e.g. 1280×720, short, small file)
+  home_screen.mp4  16:9 MP4, plays silently on a loop (e.g. 1280×720, short, small file)
   hero_bg.webp     16:9 picture or GIF used when there is no video
   Keep the lower half calm: name, day and score are printed over it (on a phone the text covers about the bottom 45%).
 
