@@ -9,6 +9,8 @@ service cloud.firestore {
 
     function signedIn() { return request.auth != null; }
     function isAdmin()  { return signedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)); }
+    function isDavid()  { return signedIn() && exists(/databases/$(database)/documents/davids/$(request.auth.uid)); }
+    function member()   { return isDavid() || isAdmin(); }
 
     // The secret PIN hash: created once (first visit to the Admin), changed only by an Admin, never readable.
     match /adminPin/main {
@@ -35,29 +37,44 @@ service cloud.firestore {
       allow delete: if signedIn() && (request.auth.uid == uid || isAdmin());
     }
 
+    // David's code: set by the Admin, never readable. Phones prove it once to be paired.
+    match /davidCode/main {
+      allow read: if false;
+      allow write: if isAdmin() && request.resource.data.keys().hasOnly(['codeHash']);
+    }
+    match /davidState/main { allow read: if signedIn(); allow write: if isAdmin(); }
+    match /davids/{uid} {
+      allow get: if signedIn() && (request.auth.uid == uid || isAdmin());
+      allow list: if isAdmin();
+      allow create, update: if signedIn() && request.auth.uid == uid
+                            && request.resource.data.codeHash == get(/databases/$(database)/documents/davidCode/main).data.codeHash;
+      allow delete: if signedIn() && (request.auth.uid == uid || isAdmin());
+    }
+
+    // The journey: only David's paired phones and the Admin.
     match /athletes/{athleteId} {
       // Profile: David's device updates score, streaks and avatar.
-      allow read: if signedIn();
-      allow create, update: if signedIn();
+      allow read: if member();
+      allow create, update: if member();
       allow delete: if isAdmin();
 
       // Daily logs: written by David's device (drafts, seal, missed-day evaluation).
       match /days/{date} {
-        allow read, create, update: if signedIn();
+        allow read, create, update: if member();
         allow delete: if isAdmin();
       }
 
       // Medals: created on seal, "celebrated" flag flipped after the video plays.
       match /awards/{awardId} {
-        allow read, create, update: if signedIn();
+        allow read, create, update: if member();
         allow delete: if isAdmin();
       }
 
       // Admin-only configuration.
-      match /plans/{planId}       { allow read: if signedIn(); allow write: if isAdmin(); }
-      match /overrides/{date}     { allow read: if signedIn(); allow write: if isAdmin(); }
-      match /targets/{horizon}    { allow read: if signedIn(); allow write: if isAdmin(); }
-      match /config/{docId}       { allow read: if signedIn(); allow write: if isAdmin(); }
+      match /plans/{planId}       { allow read: if member(); allow write: if isAdmin(); }
+      match /overrides/{date}     { allow read: if member(); allow write: if isAdmin(); }
+      match /targets/{horizon}    { allow read: if member(); allow write: if isAdmin(); }
+      match /config/{docId}       { allow read: if member(); allow write: if isAdmin(); }
     }
   }
 }
