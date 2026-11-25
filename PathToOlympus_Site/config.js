@@ -9,16 +9,16 @@
  * ========================================================================== */
 window.OLYMPUS_CONFIG = {
   firebase: {
-    apiKey: 'PASTE_YOUR_API_KEY',
-    authDomain: 'your-project.firebaseapp.com',
-    projectId: 'your-project',
-    storageBucket: 'your-project.appspot.com',
-    messagingSenderId: '000000000000',
-    appId: '1:000000000000:web:0000000000000000',
+    apiKey: 'AIzaSyBPcRyyWb1LD4n9TdbI55hQNTXxPGP-BKA',
+    authDomain: 'path-to-olympus.firebaseapp.com',
+    projectId: 'path-to-olympus',
+    storageBucket: 'path-to-olympus.firebasestorage.app',
+    messagingSenderId: '11039117380',
+    appId: '1:11039117380:web:a06d64fcacae5c5e37ec11',
   },
   // The e-mail of the Admin account (Firebase → Authentication → Users).
   // Must match the e-mail written in firestore.rules.
-  adminEmail: 'admin@example.com',
+  adminEmail: 'niksha1984@gmail.com',
   // Firestore document that holds the journey: athletes/<athleteId>
   athleteId: 'david',
 };
