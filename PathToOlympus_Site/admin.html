@@ -247,7 +247,7 @@
       ['hall', 'Hall of Glory', () => E.UI_SLOTS.hall.map(([k, l]) => slot(k, l, '9:16 image or GIF')).join('')
         + E.MEDALS.map((m) => slot('medal_' + m.id, 'Medal · ' + m.title, '1:1 image or GIF')).join('')
         + E.HORIZONS.map((h) => slot('coat_' + h.id.toLowerCase(), 'Coat of arms · ' + h.coat + ' (' + h.title + ')', '1:1 image or GIF')).join('')],
-      ['videos', 'Celebration videos (9:16 MP4, ~10 s)', () => E.VIDEO_KEYS.map((k) => slot('video_' + k, k.replace(/_/g, ' '), '9:16 MP4', 'video')).join('')],
+      ['videos', 'Celebration videos (9:16 MP4, ~10 s)', () => E.VIDEO_KEYS.map((k) => slot('video_' + k, k.replace(/_/g, ' ') + (k === 'day_incomplete' ? ' (optional: closed below 100% — else "day passed" plays)' : ''), '9:16 MP4', 'video')).join('')],
     ];
     let html = `<div class="card"><p class="small">Two ways to fill a slot:</p><p class="small">1) Upload a file with exactly the name shown into the <b>media</b> folder of your GitHub repo. For images, .png, .jpg, .webp and .gif all work.</p>
       <p class="small">2) Paste a direct link and tap Save. A link wins over a file.</p><p class="muted small">Empty slots show a labelled placeholder in David's app.</p></div>`;
