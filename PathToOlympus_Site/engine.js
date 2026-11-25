@@ -242,6 +242,7 @@
       const st = logs[d] && logs[d].status;
       if (st === 'DONE') count++;
       else if (st === 'LOST') return count;
+      else if (st === 'EXCUSED') { /* excused by the Admin: no penalty, streak goes on */ }
       else if (!isRest(planForFn(d))) return count;
       d = addDays(d, -1);
     }
@@ -277,7 +278,7 @@
     for (let d = from; d <= through; d = addDays(d, 1)) {
       const plan = planForFn(d);
       const st = logs[d] && logs[d].status;
-      if (!isRest(plan) && st !== 'DONE' && st !== 'LOST') {
+      if (!isRest(plan) && st !== 'DONE' && st !== 'LOST' && st !== 'EXCUSED') {
         lostDates.push(d);
         lostLogs[d] = { date: d, status: 'LOST', entries: (logs[d] && logs[d].entries) || [], points: -num(sc.penalty), planned: plannedPoints(plan, sc), pct: 0, complete: false, plannedMinutes: plannedMinutes(plan), plan, celebrated: false };
       }
@@ -291,6 +292,50 @@
       evaluatedThrough: through,
       newStreak: streakEndingAt(streakDate, start, merged, planForFn),
     };
+  }
+
+  /**
+   * Rebuild the profile numbers from the logs — used after the Admin edits, excuses or restores days.
+   * Walks every day from the start: DONE adds its points and the streak, LOST costs its penalty and
+   * breaks the streak, EXCUSED and rest days are neutral, an unclosed planned day in the past breaks it.
+   */
+  function recomputeProfile(start, today, logs, planForFn) {
+    let score = 0, daysDone = 0, daysLost = 0, run = 0, best = 0;
+    for (let d = start, guard = 0; d <= today && guard < 5000; d = addDays(d, 1), guard++) {
+      const l = logs[d], st = l && l.status;
+      if (st === 'DONE') { score += num(l.points); daysDone++; run++; best = Math.max(best, run); }
+      else if (st === 'LOST') { score += num(l.points); daysLost++; run = 0; }
+      else if (st === 'EXCUSED') { /* neutral */ }
+      else if (d < today && !isRest(planForFn(d))) run = 0;
+    }
+    return { score, daysDone, daysLost, currentStreak: run, bestStreak: best };
+  }
+
+  /** Personal records per exercise: best single set and best day (total), with dates. */
+  function records(logsArr) {
+    const r = {};
+    logsArr.filter((l) => l.status === 'DONE').sort((a, b) => (a.date < b.date ? -1 : 1)).forEach((l) => {
+      logEntries(l).forEach((e) => {
+        const x = r[e.exercise] || (r[e.exercise] = { bestSet: 0, bestSetDate: null, bestDay: 0, bestDayDate: null, days: 0 });
+        const top = Math.max(0, ...setList(e)), tot = volume(e);
+        x.days++;
+        if (top > x.bestSet) { x.bestSet = top; x.bestSetDate = l.date; }
+        if (tot > x.bestDay) { x.bestDay = tot; x.bestDayDate = l.date; }
+      });
+    });
+    return r;
+  }
+  /** Records broken by a new day's entries compared with the records before it. */
+  function newRecords(before, entries) {
+    const out = [];
+    (entries || []).filter(isActive).forEach((e) => {
+      const b = before[e.exercise];
+      if (!b) return; // the first time is not a "record"
+      const top = Math.max(0, ...setList(e)), tot = volume(e);
+      if (top > b.bestSet) out.push({ exercise: e.exercise, kind: 'set', value: top, was: b.bestSet });
+      else if (tot > b.bestDay) out.push({ exercise: e.exercise, kind: 'day', value: tot, was: b.bestDay });
+    });
+    return out;
   }
 
   /* ------------------------------- milestones ------------------------------- */
@@ -428,16 +473,26 @@
   /* --------------------------------- awards --------------------------------- */
 
   const MEDALS = [
-    { id: 'first_step', title: 'The First Step', subtitle: 'Sealed your very first day', check: (c) => c.doneLogs.length >= 1 },
-    { id: 'first_week', title: "I've Done My First Week", subtitle: '7 days in a row without skipping', check: (c) => c.bestStreak >= 7 },
-    { id: 'twelve_labours', title: 'The Twelve Labours', subtitle: '12 days completed — like Hercules', check: (c) => c.doneLogs.length >= 12 },
-    { id: 'titan_strength', title: 'Strength of a Titan', subtitle: 'Completed an exercise at Level III', check: (c) => c.doneLogs.some((l) => (l.entries || []).some((e) => isActive(e) && e.level === 3)) },
-    { id: 'master_of_eight', title: 'Master of the Eight', subtitle: 'Completed all 8 exercises at least once', check: (c) => new Set(c.doneLogs.flatMap((l) => (l.entries || []).filter(isActive).map((e) => e.exercise))).size === EXERCISES.length },
-    { id: 'thirty_suns', title: 'Thirty Suns', subtitle: 'A 30-day streak', check: (c) => c.bestStreak >= 30 },
-    { id: 'thousand_minutes', title: 'A Thousand Minutes', subtitle: '1,000 minutes of training', check: (c) => sum(c.doneLogs, logMinutes) >= 1000 },
-    { id: 'hundred_days', title: 'Hundred Days of Bronze', subtitle: 'A 100-day streak', check: (c) => c.bestStreak >= 100 },
-    { id: 'unbroken_year', title: 'The Unbroken Year', subtitle: 'A 365-day streak', check: (c) => c.bestStreak >= 365 },
+    { id: 'first_step', title: 'The First Step', subtitle: 'Sealed your very first day', check: (c) => c.doneLogs.length >= 1, prog: (c) => [c.doneLogs.length, 1, 'day'] },
+    { id: 'first_week', title: "I've Done My First Week", subtitle: '7 days in a row without skipping', check: (c) => c.bestStreak >= 7, prog: (c) => [c.streak, 7, 'day'] },
+    { id: 'twelve_labours', title: 'The Twelve Labours', subtitle: '12 days completed — like Hercules', check: (c) => c.doneLogs.length >= 12, prog: (c) => [c.doneLogs.length, 12, 'day'] },
+    { id: 'titan_strength', title: 'Strength of a Titan', subtitle: 'Completed an exercise at Level III', check: (c) => c.doneLogs.some((l) => (l.entries || []).some((e) => isActive(e) && e.level === 3)), prog: () => [0, 1, 'Level III exercise'] },
+    { id: 'master_of_eight', title: 'Master of the Eight', subtitle: 'Completed all 8 exercises at least once', check: (c) => new Set(c.doneLogs.flatMap((l) => (l.entries || []).filter(isActive).map((e) => e.exercise))).size === EXERCISES.length, prog: (c) => [new Set(c.doneLogs.flatMap((l) => (l.entries || []).filter(isActive).map((e) => e.exercise))).size, EXERCISES.length, 'exercise'] },
+    { id: 'thirty_suns', title: 'Thirty Suns', subtitle: 'A 30-day streak', check: (c) => c.bestStreak >= 30, prog: (c) => [c.streak, 30, 'day'] },
+    { id: 'thousand_minutes', title: 'A Thousand Minutes', subtitle: '1,000 minutes of training', check: (c) => sum(c.doneLogs, logMinutes) >= 1000, prog: (c) => [Math.floor(sum(c.doneLogs, logMinutes)), 1000, 'minute'] },
+    { id: 'hundred_days', title: 'Hundred Days of Bronze', subtitle: 'A 100-day streak', check: (c) => c.bestStreak >= 100, prog: (c) => [c.streak, 100, 'day'] },
+    { id: 'unbroken_year', title: 'The Unbroken Year', subtitle: 'A 365-day streak', check: (c) => c.bestStreak >= 365, prog: (c) => [c.streak, 365, 'day'] },
   ];
+  /** The not-yet-earned medal that is closest, with how much is left: { medal, have, need, left, unit }. */
+  function nextMedal(ctx, earned) {
+    let best = null;
+    MEDALS.filter((m) => !earned.has(m.id)).forEach((m) => {
+      const [have, need, unit] = m.prog(ctx);
+      const frac = Math.min(have / need, 0.999);
+      if (!best || frac > best.frac || (frac === best.frac && need - have < best.left)) best = { medal: m, have, need, left: Math.max(1, need - have), unit, frac };
+    });
+    return best;
+  }
 
   const newlyEarned = (ctx, earned) => MEDALS.filter((m) => !earned.has(m.id) && m.check(ctx));
   const medalAward = (m, now) => ({ id: m.id, title: m.title, subtitle: m.subtitle, kind: 'MEDAL', horizon: null, earnedAt: now, celebrated: false });
@@ -473,7 +528,7 @@
     logEntries, logMinutes, logReps, logSets, logAvgLevel,
     dayStats, streakEndingAt, closeDay, evaluate,
     blockIndex, blockRange, totals, baseline, planTarget, ghostProposal, hasMax, isEmptyTarget, meets, awardId, newlyAchieved, progress, round1,
-    MEDALS, newlyEarned, medalAward, milestoneAward, roman,
+    MEDALS, newlyEarned, nextMedal, recomputeProfile, records, newRecords, sum, medalAward, milestoneAward, roman,
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = Engine;
   else root.Engine = Engine;
