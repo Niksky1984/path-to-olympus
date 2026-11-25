@@ -21,35 +21,35 @@
   const lvl = (n) => LEVELS[n] || LEVELS[1];
 
   const EXERCISES = [
-    { id: 'PULL_UPS', name: 'Pull-ups', unit: 'reps', focus: 'Back & arms', levels: {
+    { id: 'PULL_UPS', name: 'Pull-ups', unit: 'reps', kind: 'reps', step: 1, dflt: 8, focus: 'Back & arms', levels: {
       1: 'Negative or band-assisted pull-ups — lower slowly over 3 seconds',
       2: 'Strict pull-ups from a full hang, chin over the bar',
       3: 'Pull-ups with a 2-second pause at the top, or chest-to-bar' } },
-    { id: 'PUSH_UPS', name: 'Push-ups', unit: 'reps', focus: 'Chest & triceps', levels: {
+    { id: 'PUSH_UPS', name: 'Push-ups', unit: 'reps', kind: 'reps', step: 1, dflt: 12, focus: 'Chest & triceps', levels: {
       1: 'Incline push-ups, hands on a bench',
       2: 'Full push-ups, body in one straight line',
       3: 'Decline or clap push-ups' } },
-    { id: 'PLANK', name: 'Plank', unit: 'seconds', focus: 'Core', levels: {
+    { id: 'PLANK', name: 'Plank', unit: 'seconds', kind: 'time', step: 5, dflt: 30, focus: 'Core', levels: {
       1: 'Knee plank',
       2: 'Forearm plank',
       3: 'Plank with alternating arm / leg lift' } },
-    { id: 'JUMP_ROPE', name: 'Jump rope', unit: 'skips', focus: 'Legs & stamina', levels: {
+    { id: 'JUMP_ROPE', name: 'Jump rope', unit: 'seconds', kind: 'time', step: 15, dflt: 60, focus: 'Legs & stamina', levels: {
       1: 'Basic two-foot bounce',
       2: 'Alternate-foot running step, no stops',
       3: 'High knees or double-unders' } },
-    { id: 'DIPS', name: 'Dips on parallel bars', unit: 'reps', focus: 'Chest, shoulders & triceps', levels: {
+    { id: 'DIPS', name: 'Dips on parallel bars', unit: 'reps', kind: 'reps', step: 1, dflt: 8, focus: 'Chest, shoulders & triceps', levels: {
       1: 'Bench dips or slow negative dips',
       2: 'Full dips on the parallel bars',
       3: 'Slow-tempo dips with a pause at the bottom' } },
-    { id: 'AB_WHEEL', name: "Koshperovsky's wheel", unit: 'reps', focus: 'Core', levels: {
+    { id: 'AB_WHEEL', name: "Koshperovsky's wheel", unit: 'reps', kind: 'reps', step: 1, dflt: 10, focus: 'Core', levels: {
       1: 'Kneeling roll-outs, short range',
       2: 'Kneeling roll-outs, full range',
       3: 'Standing roll-outs' } },
-    { id: 'ABS', name: 'Abdominal exercises', unit: 'reps', focus: 'Core', levels: {
+    { id: 'ABS', name: 'Abdominal exercises', unit: 'reps', kind: 'reps', step: 1, dflt: 15, focus: 'Core', levels: {
       1: 'Crunches',
       2: 'Full sit-ups',
       3: 'Hanging knee raises or V-ups' } },
-    { id: 'SWIMMING', name: 'Swimming', unit: 'lengths', focus: 'Whole body', levels: {
+    { id: 'SWIMMING', name: 'Swimming', unit: 'lengths', kind: 'reps', step: 1, dflt: 4, focus: 'Whole body', levels: {
       1: 'Easy lengths with rests',
       2: 'Continuous lengths',
       3: 'Interval sprints' } },
@@ -81,11 +81,11 @@
   /** The Codex (guide) page: sections with default text; the Admin can rewrite every text and add an image to each. */
   const GUIDE_SECTIONS = [
     ['intro', 'Welcome to the Path', 'Ten years. One road. Every day you train, you climb a little higher toward Olympus. The road is mastered by the one who walks it — not by the one who only dreams of it.'],
-    ['day', 'How a day works', 'At the top of the Trial page you see one square for every exercise in today\'s plan. Tap a square, enter what you really did — level, reps per set, sets and minutes — and tap OK. You can change it again until you close the day. You may do more than the plan, less, or something different: tap “+” to add another exercise. When you are finished, tap “Close the day” and confirm.'],
-    ['points', 'How points are counted', 'Every exercise has a hardness. Harder exercises and higher levels give more points. Points = Hardness × Level × (5 + reps × sets × unit value + minutes). Your day score is compared with the points the plan asks for: that is your day percentage.'],
+    ['day', 'How a day works', 'At the top of the Trial page you see one square for every exercise in today\'s plan. Tap a square, enter what you really did — the level and every set (reps, or seconds for the plank and jump rope) — and tap OK. You can change it again until you close the day. You may do more than the plan, less, or something different: tap “+” to add another exercise. When you are finished, tap “Close the day” and confirm.'],
+    ['points', 'How points are counted', 'Every exercise has a hardness. Harder exercises and higher levels give more points. Points = Hardness × Level × (5 + all your reps × unit value). For timed exercises (plank, jump rope) every second counts instead, plus a bonus per minute. Your day score is compared with the points the plan asks for: that is your day percentage.'],
     ['circles', 'The calendar circles', 'Completed: you reached 100% of the plan. Incomplete: you closed the day below 100% — it still counts, your streak continues. Skipped: the day was not closed by midnight — you lose points and your streak goes back to zero.'],
     ['streak', 'Streaks and skipped days', 'Your streak counts the days in a row you closed. Close every planned day — even a small one — and the streak keeps growing. Skip one, and it starts again from zero.'],
-    ['targets', 'Milestones and targets', 'Your training is measured over a month, half a year, a year, five years and ten years. Each milestone has targets: points, minutes, reps, sets, level, and how few days and minutes you may miss. Reach them to earn a coat of arms.'],
+    ['targets', 'Milestones and targets', 'Your training is measured over a month, half a year, a year, five years and ten years. Each milestone has targets: points, reps, sets, timed minutes, level, and how few days and minutes you may miss. Reach them to earn a coat of arms.'],
     ['hall', 'Medals and coats of arms', 'Medals are won for special deeds — your first day, your first week in a row, a thousand minutes and more. Coats of arms are won by reaching milestone targets. All of them wait for you in the Hall of Glory.'],
   ];
   const guideExKey = (exId, level) => `ex_${exId}_${level}`;
@@ -123,14 +123,16 @@
   /* ------------------------------ points formula ------------------------------ */
 
   /**
-   * Exercise points = Hardness × LevelMultiplier × (Base + reps × sets × UnitValue + minutes × PerMinute)
+   * Exercise points = Hardness × LevelMultiplier × (Base + total × UnitValue + minutes × PerMinute)
+   *   total   = all reps of all sets (rep exercises) or all seconds (timed: plank, jump rope)
+   *   minutes = only for timed exercises (seconds ÷ 60)
    * Day points      = Σ exercise points (rounded).  Planned points use the same formula on the plan.
    * Every number is editable in Admin → Scoring (stored in config/scoring).
    */
   const DEFAULT_SCORING = {
     hardness: { PULL_UPS: 2.6, PUSH_UPS: 1.8, PLANK: 3.1, JUMP_ROPE: 1.2, DIPS: 2.4, AB_WHEEL: 2.8, ABS: 1.5, SWIMMING: 2.2 },
-    // what one rep (or second / skip / length) is worth compared with one pull-up rep
-    unitValue: { PULL_UPS: 1, PUSH_UPS: 1, PLANK: 0.1, JUMP_ROPE: 0.05, DIPS: 1, AB_WHEEL: 1, ABS: 1, SWIMMING: 4 },
+    // what one rep (or one second for timed exercises / one length) is worth compared with one pull-up rep
+    unitValue: { PULL_UPS: 1, PUSH_UPS: 1, PLANK: 0.1, JUMP_ROPE: 0.1, DIPS: 1, AB_WHEEL: 1, ABS: 1, SWIMMING: 4 },
     levelMult: { 1: 1, 2: 2, 3: 3 },
     base: 5,          // points for doing an exercise at all
     perMinute: 1,     // points per minute of training
@@ -147,10 +149,33 @@
     };
   }
   const num = (v) => (Number.isFinite(+v) ? +v : 0);
-  const isActive = (e) => !!e && (num(e.reps) > 0 || num(e.minutes) > 0);
-  /** Total reps (reps per set × sets; sets count as 1 when left at 0). */
-  const volume = (e) => num(e.reps) * Math.max(1, num(e.sets));
-  const setsOf = (e) => (num(e.reps) > 0 ? Math.max(1, num(e.sets)) : num(e.sets));
+  const isTimed = (exId) => !!(EX[exId] && EX[exId].kind === 'time');
+  /**
+   * The sets of an entry: one number per set — reps, or seconds for timed exercises.
+   * Each set can differ (e.g. 10 · 8 · 6). Older records stored "reps × sets" instead.
+   */
+  function setList(e) {
+    if (!e) return [];
+    if (Array.isArray(e.perSet)) return e.perSet.map(num).filter((v) => v > 0);
+    const per = num(e.reps);
+    return per > 0 ? Array(Math.max(1, num(e.sets))).fill(per) : [];
+  }
+  const isActive = (e) => setList(e).length > 0;
+  /** All reps (or all seconds for timed exercises). */
+  const volume = (e) => sum(setList(e), (v) => v);
+  const setsOf = (e) => setList(e).length;
+  const repsOf = (e) => (e && isTimed(e.exercise) ? 0 : volume(e));
+  const minutesOf = (e) => (e && isTimed(e.exercise) ? volume(e) / 60 : 0);
+  /** "10 · 8 · 6 reps", "3 × 10 reps", "2 × 0:45" */
+  const fmtSecs = (s) => (s >= 60 ? `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}` : `${s} s`);
+  function fmtSets(e) {
+    const l = setList(e);
+    if (!l.length) return '—';
+    const timed = isTimed(e.exercise), unit = (EX[e.exercise] || { unit: 'reps' }).unit;
+    const f = (v) => (timed ? fmtSecs(v) : String(v));
+    const body = l.every((v) => v === l[0]) ? (l.length > 1 ? `${l.length} × ${f(l[0])}` : f(l[0])) : l.map(f).join(' · ');
+    return timed ? body : `${body} ${unit}`;
+  }
 
   function exercisePoints(e, sc) {
     if (!isActive(e)) return 0;
@@ -158,27 +183,28 @@
     const H = num(sc.hardness[e.exercise] != null ? sc.hardness[e.exercise] : 1);
     const L = num(sc.levelMult[e.level] != null ? sc.levelMult[e.level] : e.level || 1);
     const U = num(sc.unitValue[e.exercise] != null ? sc.unitValue[e.exercise] : 1);
-    return H * L * (num(sc.base) + volume(e) * U + num(e.minutes) * num(sc.perMinute));
+    return H * L * (num(sc.base) + volume(e) * U + minutesOf(e) * num(sc.perMinute));
   }
   const dayPoints = (entries, sc) => Math.round(sum(entries || [], (e) => exercisePoints(e, sc)));
 
   /** The plan's numbers expressed as entries. */
-  const planEntries = (plan) => (plan && plan.exercises ? plan.exercises : []).map((p) => ({
-    exercise: p.exercise, level: p.level || 1, reps: num(p.targetReps), sets: num(p.targetSets), minutes: num(p.targetMinutes),
-  }));
+  const planEntries = (plan) => (plan && plan.exercises ? plan.exercises : []).map(planEntry);
+  function planEntry(p) {
+    return Array.isArray(p.targetPerSet) ? { exercise: p.exercise, level: p.level || 1, perSet: p.targetPerSet }
+      : { exercise: p.exercise, level: p.level || 1, reps: num(p.targetReps), sets: num(p.targetSets) };
+  }
   const plannedPoints = (plan, sc) => dayPoints(planEntries(plan), sc);
   function plannedMinutes(plan) {
     if (!plan) return 0;
-    const m = sum(plan.exercises || [], (p) => num(p.targetMinutes));
-    return m > 0 ? m : num(plan.targetMinutes);
+    return Math.round(sum(planEntries(plan), minutesOf) * 10) / 10;
   }
 
   /* -------------------------------- day logs -------------------------------- */
 
   const sum = (arr, f) => arr.reduce((a, x) => a + (f(x) || 0), 0);
   const logEntries = (log) => (log.entries || []).filter(isActive);
-  const logMinutes = (log) => sum(logEntries(log), (e) => num(e.minutes));
-  const logReps = (log) => sum(logEntries(log), volume);
+  const logMinutes = (log) => sum(logEntries(log), minutesOf);
+  const logReps = (log) => sum(logEntries(log), repsOf);
   const logSets = (log) => sum(logEntries(log), setsOf);
   function logAvgLevel(log) {
     const a = logEntries(log);
@@ -197,7 +223,7 @@
     return {
       points, planned, pct,
       complete: pct >= num(sc.completeAt),
-      minutes: sum(active, (e) => num(e.minutes)),
+      minutes: Math.round(sum(active, minutesOf) * 10) / 10,
       plannedMinutes: plannedMinutes(plan),
       exercisesDone: active.length,
       exercisesPlanned: plan && plan.exercises ? plan.exercises.length : 0,
@@ -291,7 +317,7 @@
       plannedMinutes: plannedMin,
       missedMinutes: missed,
       missedPct: plannedMin ? (missed * 100) / plannedMin : 0,
-      reps: sum(entries, volume),
+      reps: sum(entries, repsOf),
       sets: sum(entries, setsOf),
       avgLevel: entries.length ? sum(entries, (e) => num(e.level)) / entries.length : 0,
     };
@@ -339,7 +365,7 @@
       known++;
       const es = planEntries(p);
       pts += dayPoints(es, sc); min += plannedMinutes(p);
-      reps += sum(es, volume); sets += sum(es, setsOf);
+      reps += sum(es, repsOf); sets += sum(es, setsOf);
       es.forEach((e) => { lvlSum += e.level; lvlN++; });
     }
     const scale = known > 0 ? h.days / known : 0;
@@ -443,7 +469,7 @@
     RULES, LEVELS, lvl, EXERCISES, EX, imgKey, gifKey, HORIZONS, HZ, VIDEO_KEYS, UI_SLOTS, MONTH_NAMES, GUIDE_SECTIONS, guideExKey, DOW,
     todayISO, addDays, diffDays, dowOf, mondayOf, isValidISO,
     isRest, planEnd, planCovers, planFor,
-    DEFAULT_SCORING, scoring, isActive, volume, setsOf, exercisePoints, dayPoints, planEntries, plannedPoints, plannedMinutes,
+    DEFAULT_SCORING, scoring, isTimed, setList, fmtSets, fmtSecs, repsOf, minutesOf, planEntry, isActive, volume, setsOf, exercisePoints, dayPoints, planEntries, plannedPoints, plannedMinutes,
     logEntries, logMinutes, logReps, logSets, logAvgLevel,
     dayStats, streakEndingAt, closeDay, evaluate,
     blockIndex, blockRange, totals, baseline, planTarget, ghostProposal, hasMax, isEmptyTarget, meets, awardId, newlyAchieved, progress, round1,
