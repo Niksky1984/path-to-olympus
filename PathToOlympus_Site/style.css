@@ -476,3 +476,12 @@ nav.tabs .medallion.has-img { border-radius: 50%; }
 nav.tabs .medallion.has-img img { border-radius: 0; object-fit: contain; }
 nav.tabs button:not(.on) .medallion.has-img { filter: drop-shadow(0 2px 3px rgba(0,0,0,.5)); }
 nav.tabs button.on .medallion.has-img { box-shadow: none; border-radius: 50%; filter: drop-shadow(0 0 6px rgba(255,226,130,.95)) drop-shadow(0 3px 5px rgba(0,0,0,.55)); }
+
+/* v4.2: PIN-only Admin */
+.pin-card { margin: 24px auto 0; max-width: 420px; }
+.pin-card h2 { margin-top: 6px; }
+.pin-box { display: block; width: 100%; max-width: 260px; margin: 10px auto; padding: 14px; border-radius: 14px; border: 1.5px solid var(--gold); background: #fff;
+  text-align: center; font-size: 26px; letter-spacing: .35em; font-family: var(--serif); }
+.row .pin-box { max-width: none; margin: 4px 0; font-size: 20px; }
+.pin-card .btn-gold { max-width: 260px; margin: 8px auto 0; }
+.pin-box::placeholder { letter-spacing: .04em; font-size: 17px; font-family: var(--sans); }
