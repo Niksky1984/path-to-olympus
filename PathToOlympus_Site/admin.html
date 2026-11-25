@@ -80,7 +80,7 @@
     if (log && log.status === 'DONE') today = `<span class="${log.complete === false ? 'warn' : 'ok'}">Closed · ${O.n0(log.pct)}% · +${O.fmtNum(log.points)} pts</span>`;
     else {
       const st = E.dayStats(plan, (log && log.entries) || [], S.scoring);
-      today = !plan || E.isRest(plan) ? `No plan today${st.points ? ` · ${O.fmtNum(st.points)} pts logged` : ''}` : `In progress: ${O.fmtNum(st.points)} / ${O.fmtNum(st.planned)} pts (${st.pct}%) · ${st.minutes}/${st.plannedMinutes} min`;
+      today = !plan || E.isRest(plan) ? `No plan today${st.points ? ` · ${O.fmtNum(st.points)} pts logged` : ''}` : `In progress: ${O.fmtNum(st.points)} / ${O.fmtNum(st.planned)} pts (${st.pct}%)${st.plannedMinutes ? ` · ${st.minutes}/${st.plannedMinutes} min timed` : ''}`;
     }
     return `<div class="card"><div class="row">${O.avatarHTML(p, 64)}<div class="grow"><h3>${esc(p.name)}</h3>
         <div class="small">Glory <b>${O.fmtNum(p.score)}</b> · streak <b>${O.n0(p.currentStreak)}</b> (best ${O.n0(p.bestStreak)})</div>
@@ -97,19 +97,18 @@
       <button ${attrs} data-d="${step}" ${value >= max ? 'disabled' : ''}>+</button></div></div>`;
   }
 
-  /** One day of the weekly plan: exercises with level, reps per set, sets and minutes. */
+  /** One day of the weekly plan: exercises with a level and each set (reps, or seconds when timed). */
   function dayEditor(day, k) {
     const at = (act, extra = '') => `data-act="${act}" data-k="${k}" ${extra}`;
     const pts = E.plannedPoints(day, S.scoring), mins = E.plannedMinutes(day);
-    let html = `<p class="small"><b>${O.fmtNum(pts)} points</b> · ${mins} minutes planned</p>`;
+    let html = `<p class="small"><b>${O.fmtNum(pts)} points</b>${mins ? ` · ${mins} min timed` : ''} planned</p>`;
     (day.exercises || []).forEach((p, i) => {
       const info = E.EX[p.exercise];
-      const exPts = E.exercisePoints({ exercise: p.exercise, level: p.level, reps: p.targetReps, sets: p.targetSets, minutes: p.targetMinutes }, S.scoring);
+      const exPts = E.exercisePoints(E.planEntry(p), S.scoring);
       html += `<div class="inset"><div class="row"><b class="grow">${esc(info.name)}</b><span class="ex-pts">${O.fmtNum(exPts)} pts</span><button class="btn-text danger-text" ${at('d-rm', `data-i="${i}"`)}>✕</button></div>
         <div class="levels" style="margin:6px 0">${[1, 2, 3].map((n) => `<button class="${p.level === n ? 'on' : ''}" ${at('d-lv', `data-i="${i}" data-lv="${n}"`)}>${E.lvl(n).roman}</button>`).join('')}</div>
-        <div class="steppers">${stepper(info.unit + ' per set', O.n0(p.targetReps), at('d-tg', `data-i="${i}" data-field="targetReps"`), info.unit === 'seconds' ? 5 : 1, 0, 9999)}
-        ${stepper('sets', O.n0(p.targetSets), at('d-tg', `data-i="${i}" data-field="targetSets"`), 1, 0, 20)}
-        ${stepper('minutes', O.n0(p.targetMinutes), at('d-tg', `data-i="${i}" data-field="targetMinutes"`), 1, 0, 240)}</div></div>`;
+        <div class="small muted">${E.isTimed(p.exercise) ? 'Seconds in each set' : 'Reps in each set'} · ${esc(E.fmtSets(E.planEntry(p)))}</div>
+        ${O.setsEditorHTML(p.exercise, E.setList(E.planEntry(p)), `data-k="${k}" data-row="${i}"`)}</div>`;
     });
     const remaining = E.EXERCISES.filter((e) => !(day.exercises || []).some((x) => x.exercise === e.id));
     if (remaining.length) {
@@ -165,7 +164,7 @@
 
   /* -------------------------------- targets -------------------------------- */
 
-  const TFIELDS = [['points', 'Points ≥'], ['minutes', 'Minutes ≥'], ['reps', 'Reps ≥'], ['sets', 'Sets ≥'], ['avgLevel', 'Avg level ≥'], ['maxSkippedPct', 'Skipped days ≤ %'], ['maxMissedPct', 'Missed minutes ≤ %']];
+  const TFIELDS = [['points', 'Points ≥'], ['minutes', 'Timed minutes ≥'], ['reps', 'Reps ≥'], ['sets', 'Sets ≥'], ['avgLevel', 'Avg level ≥'], ['maxSkippedPct', 'Skipped days ≤ %'], ['maxMissedPct', 'Missed timed min ≤ %']];
   const fmtT = (k, v) => (k === 'maxSkippedPct' || k === 'maxMissedPct' ? (E.hasMax(v) ? v + '%' : '–') : k === 'avgLevel' ? (O.n0(v) ? v : '–') : O.n0(v) ? O.fmtNum(v) : '–');
   const fmtNow = (k, s) => ({ points: O.fmtNum(s.points), minutes: O.fmtNum(s.minutes), reps: O.fmtNum(s.reps), sets: O.fmtNum(s.sets), avgLevel: s.avgLevel ? s.avgLevel.toFixed(1) : '–', maxSkippedPct: (Math.round(s.skippedPct * 10) / 10) + '%', maxMissedPct: (Math.round(s.missedPct * 10) / 10) + '%' })[k];
 
@@ -197,16 +196,19 @@
 
   function scoringTab() {
     const sc = A.scDraft || (A.scDraft = clone(S.scoring));
-    const ex = { exercise: 'PULL_UPS', level: 2, reps: 8, sets: 3, minutes: 5 };
+    const ex = { exercise: 'PULL_UPS', level: 2, perSet: [10, 8, 6] };
+    const exT = { exercise: 'PLANK', level: 2, perSet: [60, 45] };
     const exPts = E.exercisePoints(ex, sc);
     const inp = (path, v, step = '0.1') => `<input inputmode="decimal" data-bind="sc" data-path="${path}" value="${esc(v)}" step="${step}">`;
     let rows = '';
-    E.EXERCISES.forEach((e) => { rows += `<div>${esc(e.name)} <span class="muted tiny">(per ${e.unit.replace(/s$/, '')})</span></div>${inp('hardness.' + e.id, sc.hardness[e.id])}${inp('unitValue.' + e.id, sc.unitValue[e.id])}`; });
+    E.EXERCISES.forEach((e) => { rows += `<div>${esc(e.name)} <span class="muted tiny">(per ${E.isTimed(e.id) ? 'second' : e.unit.replace(/s$/, '')})</span></div>${inp('hardness.' + e.id, sc.hardness[e.id])}${inp('unitValue.' + e.id, sc.unitValue[e.id])}`; });
     return `<div class="card">${O.section('The points formula')}
-        <div class="formula">Exercise points =<br>&nbsp; Hardness × Level ×<br>&nbsp; (Base + reps × sets × Unit value + minutes × Per-minute)<br><br>Day points = sum of all exercises<br>Day % = day points ÷ planned points</div>
-        <p class="small">Example: Pull-ups, Level II, 8 reps × 3 sets, 5 min →
-          ${sc.hardness.PULL_UPS} × ${sc.levelMult[2]} × (${sc.base} + 8×3×${sc.unitValue.PULL_UPS} + 5×${sc.perMinute}) = <b>${O.fmtNum(exPts)} pts</b></p>
-        <p class="muted small">Unit value = what one rep / second / skip / length is worth compared with one pull-up rep. Points are stored when David closes a day, so changing the formula only affects new days.</p></div>
+        <div class="formula">Exercise points =<br>&nbsp; Hardness × Level ×<br>&nbsp; (Base + total × Unit value + minutes × Per-minute)<br><br>total = all reps of all sets, or all seconds for timed exercises (plank, jump rope)<br>minutes = timed exercises only<br><br>Day points = sum of all exercises<br>Day % = day points ÷ planned points</div>
+        <p class="small">Example: Pull-ups, Level II, sets 10 · 8 · 6 →
+          ${sc.hardness.PULL_UPS} × ${sc.levelMult[2]} × (${sc.base} + 24×${sc.unitValue.PULL_UPS}) = <b>${O.fmtNum(exPts)} pts</b></p>
+        <p class="small">Example: Plank, Level II, 60 s + 45 s →
+          ${sc.hardness.PLANK} × ${sc.levelMult[2]} × (${sc.base} + 105×${sc.unitValue.PLANK} + 1.75×${sc.perMinute}) = <b>${O.fmtNum(E.exercisePoints(exT, sc))} pts</b></p>
+        <p class="muted small">Unit value = what one rep / second / length is worth compared with one pull-up rep. Points are stored when David closes a day, so changing the formula only affects new days.</p></div>
       <div class="card">${O.section('Exercises')}<div class="num-grid"><span></span><span class="h">Hardness</span><span class="h">Unit value</span>${rows}</div></div>
       <div class="card">${O.section('Levels & general')}<div class="num-grid">
         <div>Level I multiplier</div>${inp('levelMult.1', sc.levelMult[1])}<span></span>
@@ -235,6 +237,9 @@
 
   function mediaTab() {
     const groups = [
+      ['agora', 'Agora: the "Hail, David!" window (16:9)', () => slot('video_hero', 'Hail window video', '16:9 MP4 (plays silently, on a loop)', 'video')
+        + slot('hero_bg', 'Hail window picture (used when there is no video)', '16:9 image or GIF, ~1280×720')
+        + '<p class="muted small">Keep the lower half of the video calm: David\'s name, day and score are printed over it.</p>'],
       ['exercises', 'Exercise images (1:1)', () => E.EXERCISES.map((e) => [1, 2, 3].map((l) => slot(E.imgKey(e.id, l), `${e.name} · ${E.lvl(l).label}`, '1:1 PNG/JPG/WebP')).join('')).join('')],
       ['gifs', 'Exercise GIFs (1:1, used when there is no image)', () => E.EXERCISES.map((e) => [1, 2, 3].map((l) => slot(E.gifKey(e.id, l), `${e.name} · ${E.lvl(l).label}`, '1:1 GIF')).join('')).join('')],
       ['chronicle', 'Chronicle: month backgrounds and circles', () => E.UI_SLOTS.months.map(([k, l]) => slot(k, l, 'image or GIF, ~1080×1000')).join('')
@@ -331,7 +336,7 @@
     const el = e.target, d = el.dataset;
     if (d.change === 'd-add' && el.value) {
       const day = dayRef(d.k);
-      day.exercises = (day.exercises || []).concat([{ exercise: el.value, level: 1, targetReps: 10, targetSets: 3, targetMinutes: 5 }]);
+      day.exercises = (day.exercises || []).concat([{ exercise: el.value, level: 1, targetPerSet: Array(E.isTimed(el.value) ? 2 : 3).fill(E.EX[el.value].dflt) }]);
       render();
     }
     if (d.bind === 'sc') render(); // refresh the worked example
@@ -399,7 +404,11 @@
       case 'p-open': A.openDay = A.openDay === d.dow ? null : d.dow; break;
       case 'd-rm': dayRef(d.k).exercises.splice(+d.i, 1); break;
       case 'd-lv': dayRef(d.k).exercises[+d.i].level = +d.lv; break;
-      case 'd-tg': { const ex = dayRef(d.k).exercises[+d.i]; ex[d.field] = O.clamp(O.n0(ex[d.field]) + +d.d, 0, 9999); break; }
+      case 'sl-step': case 'sl-del': case 'sl-add': {
+        const ex = dayRef(d.k).exercises[+d.row];
+        ex.targetPerSet = O.setsEdit(ex.exercise, E.setList(E.planEntry(ex)), d.act, d);
+        delete ex.targetReps; delete ex.targetSets; delete ex.targetMinutes; break;
+      }
 
       /* targets */
       case 't-fill': {
