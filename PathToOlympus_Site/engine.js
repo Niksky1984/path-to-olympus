@@ -68,7 +68,7 @@
   ];
   const HZ = Object.fromEntries(HORIZONS.map((h) => [h.id, h]));
 
-  const VIDEO_KEYS = ['day_passed', 'day_failed', 'target_month', 'target_half_year', 'target_year', 'target_five_year', 'target_ten_year'];
+  const VIDEO_KEYS = ['day_passed', 'day_incomplete', 'day_failed', 'target_month', 'target_half_year', 'target_year', 'target_five_year', 'target_ten_year'];
   /** Every other media slot (images or GIFs) the Admin can fill. */
   const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
   const UI_SLOTS = {
