@@ -28,6 +28,8 @@
   const A = {
     sub: 'overview',
     pinMsg: '',
+    dayEdit: null,        // { date, entries:[{exercise, level, perSet}], reason }
+    davidReady: undefined, // is David's code set?
     busy: false,
     planDraft: null,
     openDay: 'MONDAY',
@@ -83,6 +85,45 @@
         <div class="small muted">Journey started ${p.startDate ? O.fmtDate(p.startDate) : '— (starts when David first opens his app)'}</div></div></div>
         <p class="small" style="margin-top:10px"><b>Today:</b> ${today} <button class="btn-text" data-act="day" data-date="${S.today}">Details</button></p></div>`
       + O.calendarCard(A.month) + O.totalsCard() + O.trendsCard(A.metric) + O.trajectoryCard() + O.horizonsCard();
+  }
+
+  /* ------------------------- Admin: fix / excuse a day ------------------------- */
+
+  function openDayEdit(date) {
+    const log = S.logs[date], plan = O.planForDate(date);
+    const fromLog = ((log && log.entries) || []).filter(E.isActive).map((e) => ({ exercise: e.exercise, level: e.level || 1, perSet: E.setList(e) }));
+    const ids = new Set(fromLog.map((e) => e.exercise));
+    const fromPlan = ((plan && plan.exercises) || []).filter((p) => !ids.has(p.exercise)).map((p) => ({ exercise: p.exercise, level: p.level || 1, perSet: [] }));
+    A.dayEdit = { date, entries: fromLog.concat(fromPlan), reason: (log && log.reason) || '' };
+  }
+
+  function dayEditCard() {
+    const de = A.dayEdit, date = de.date, log = S.logs[date], future = date > S.today;
+    const status = !log ? (future ? 'Upcoming' : 'Nothing recorded') : log.status === 'DONE' ? `Closed · ${O.n0(log.pct)}% · ${O.fmtNum(log.points)} pts` : log.status === 'LOST' ? 'Skipped' : log.status === 'EXCUSED' ? 'Excused' : 'In progress (not closed)';
+    let html = `<div class="card day-edit"><div class="row"><h3 class="grow">${O.fmtDate(date, 'long')}</h3><button class="btn-text" data-act="de-cancel">✕</button></div>
+      <p class="small">Now: <b>${esc(status)}</b>${log && log.editedByAdmin ? ' · edited by you' : ''}</p>`;
+    if (!future) {
+      html += `<p class="muted small">Change what David did, then save. Points, streak and totals are recalculated for the whole journey.</p>`;
+      de.entries.forEach((e, i) => {
+        const info = E.EX[e.exercise], pts = E.exercisePoints({ exercise: e.exercise, level: e.level, perSet: e.perSet }, S.scoring);
+        html += `<div class="inset"><div class="row"><b class="grow">${esc(info.name)}</b><span class="ex-pts">${O.fmtNum(pts)} pts</span><button class="btn-text danger-text" data-act="de-rm" data-i="${i}">✕</button></div>
+          <div class="levels" style="margin:6px 0">${[1, 2, 3].map((n) => `<button class="${e.level === n ? 'on' : ''}" data-act="de-lv" data-i="${i}" data-lv="${n}">${E.lvl(n).roman}</button>`).join('')}</div>
+          ${O.setsEditorHTML(e.exercise, e.perSet, `data-scope="day" data-row="${i}"`)}</div>`;
+      });
+      const left = E.EXERCISES.filter((x) => !de.entries.some((e) => e.exercise === x.id));
+      if (left.length) html += `<label class="field"><span>Add exercise</span><select data-change="de-add"><option value="">＋ Choose…</option>${left.map((x) => `<option value="${x.id}">${esc(x.name)}</option>`).join('')}</select></label>`;
+      const pts = E.dayPoints(de.entries.map((e) => ({ ...e })), S.scoring);
+      html += `<button class="btn-gold" data-act="de-save" ${de.entries.some((e) => E.isActive(e)) ? '' : 'disabled'}>Save as a closed day · ${O.fmtNum(pts)} pts</button>`;
+    }
+    html += `<div class="inset" style="margin-top:12px"><b>Excuse this day</b><p class="muted small">Sick, travelling, a family day… No penalty, the streak goes on.</p>
+      <input data-bind="de-reason" placeholder="Reason (optional, David sees it)" value="${esc(de.reason)}">
+      <button class="btn-line" data-act="de-excuse" style="margin-top:8px">Excuse ${future ? 'in advance' : 'this day'}</button></div>
+      <div class="row" style="margin-top:12px;flex-wrap:wrap;gap:6px">
+        ${!future && log && log.status !== 'LOST' ? '<button class="btn-text danger-text" data-act="de-lost">Mark as skipped</button>' : ''}
+        ${date === S.today && log && log.status !== 'PENDING' ? '<button class="btn-text" data-act="de-reopen">Reopen for David</button>' : ''}
+        ${log ? '<button class="btn-text" data-act="de-clear">Remove this record</button>' : ''}
+      </div></div>`;
+    return html;
   }
 
   /* ------------------------------- day editor ------------------------------- */
@@ -276,6 +317,10 @@
   /* -------------------------------- settings -------------------------------- */
 
   function settingsTab() {
+    if (A.davidReady === undefined && !A.davidLoading) {
+      A.davidLoading = true;
+      O.backend().davidState(S.user.uid).then((st) => { A.davidReady = !!st.ready; }).catch(() => { A.davidReady = false; }).finally(() => { A.davidLoading = false; render(); });
+    }
     const p = O.profile();
     const st = A.settings || (A.settings = { name: p.name, start: p.startDate || S.today });
     return `<div class="card">${O.section('Athlete')}
@@ -283,6 +328,17 @@
         <div class="row" style="margin-top:8px"><div class="grow">Journey start</div><button class="icon" data-act="s-start" data-d="-1">‹</button><b>${O.fmtDate(st.start)}</b><button class="icon" data-act="s-start" data-d="1">›</button></div>
         <p class="muted small">Changing the start re-checks skipped days from the new date. Days already closed or skipped keep their status.</p>
         <button class="btn-text" data-act="s-start-save" ${st.start === p.startDate ? 'disabled' : ''}>Save start date</button></div>
+      <div class="card">${O.section("David's phone")}
+        ${A.davidReady === undefined ? '<p class="muted small">Checking…</p>' : A.davidReady
+          ? '<p class="small">David\'s code is set. Each phone needs it once. A new code signs out the phones paired with the old one.</p>'
+          : '<p class="small bad">No code yet — David\'s app stays locked until you set one.</p>'}
+        <div class="row"><input id="dc1" class="pin-box grow" type="password" inputmode="numeric" maxlength="8" placeholder="Code for David"><input id="dc2" class="pin-box grow" type="password" inputmode="numeric" maxlength="8" placeholder="Repeat"></div>
+        <button class="btn-line" data-act="david-code" style="margin-top:8px">${A.davidReady ? 'Change the code' : 'Set the code'}</button></div>
+      <div class="card">${O.section('Backup')}
+        <p class="small">Download everything (days, medals, plans, targets, settings) as one file. Keep it safe — you can restore it any time.</p>
+        <div class="row" style="flex-wrap:wrap;gap:8px"><button class="btn-line" data-act="backup">⬇ Download backup</button>
+        <label class="btn-line file-btn">⬆ Restore from file<input type="file" accept="application/json,.json" data-change="restore" hidden></label></div>
+        <p class="muted tiny">A backup is downloaded automatically before every reset.</p></div>
       <div class="card danger-zone">${O.section('Start again')}
         <p class="small">Deletes every closed day, skipped day, medal and coat of arms, and sets points and streaks to 0. The journey starts again today.
         <b>Plans, targets, scoring, pictures, videos, the Codex, David's name and photo stay.</b></p>
@@ -293,7 +349,7 @@
         <p class="muted small">One PIN for all your devices. Changing it signs out your other devices until they enter the new PIN.</p>
         <div class="row"><input id="np1" class="pin-box grow" type="password" inputmode="numeric" maxlength="8" placeholder="New PIN"><input id="np2" class="pin-box grow" type="password" inputmode="numeric" maxlength="8" placeholder="Repeat"></div>
         <button class="btn-line" data-act="pin-change" style="margin-top:8px">Change PIN</button>
-        <p style="margin-top:12px"><button class="btn-text" data-act="lock">🔒 Lock now</button> <button class="btn-text danger-text" data-act="forget">Forget this device</button></p></div>`;
+        <p style="margin-top:12px"><button class="btn-text" data-act="lock">🔒 Lock now</button> <button class="btn-text danger-text" data-act="forget">Forget this device</button></p></div>${O.versionHTML()}`;
   }
 
   /* --------------------------------- render --------------------------------- */
@@ -307,6 +363,7 @@
     let body;
     if (!unlocked()) body = pinScreen();
     else if (!O.loaded()) body = `<div class="empty">${O.laurelSVG(100)}<p>Loading the chronicle…</p></div>`;
+    else if (A.dayEdit) body = dayEditCard();
     else {
       const tabs = [['overview', 'Overview'], ['plans', 'Plans'], ['targets', 'Targets'], ['scoring', 'Scoring'], ['media', 'Media'], ['guide', 'Guide'], ['settings', 'Settings']];
       const views = { overview, plans: plansTab, targets: targetsTab, scoring: scoringTab, media: mediaTab, guide: guideTab, settings: settingsTab };
@@ -330,6 +387,7 @@
     else if (d.bind === 'd-note') dayRef(d.k).note = el.value;
     else if (d.bind === 'tg') A.targetDrafts[d.h][d.f] = el.value;
     else if (d.bind === 's-name') A.settings.name = el.value;
+    else if (d.bind === 'de-reason') A.dayEdit.reason = el.value;
     else if (d.bind === 'guide') A.guideDraft[d.key] = el.value;
     else if (d.bind === 'sc') {
       const [a, b] = d.path.split('.');
@@ -345,6 +403,8 @@
       day.exercises = (day.exercises || []).concat([{ exercise: el.value, level: 1, targetPerSet: Array(E.isTimed(el.value) ? 2 : 3).fill(E.EX[el.value].dflt) }]);
       render();
     }
+    if (d.change === 'de-add' && el.value) { A.dayEdit.entries.push({ exercise: el.value, level: 1, perSet: [E.EX[el.value].dflt] }); render(); }
+    if (d.change === 'restore' && el.files && el.files[0]) restoreFrom(el.files[0]);
     if (d.bind === 'sc') render(); // refresh the worked example
   });
 
@@ -385,8 +445,17 @@
       }
       case 'reset-ask': A.resetAsk = true; break;
       case 'reset-cancel': A.resetAsk = false; break;
+      case 'david-code': {
+        const c1 = val('dc1'), c2 = val('dc2');
+        if (!/^\d{4,8}$/.test(c1)) return O.toast('The code is 4–8 digits');
+        if (c1 !== c2) return O.toast('The two codes are different');
+        if (await O.adminOp('Code saved — give it to David', async () => be.setDavidCode(await O.davidCodeHash(c1)))) A.davidReady = true;
+        break;
+      }
+      case 'backup': try { await O.backupNow(); O.toast('Backup downloaded'); } catch (err) { O.toast('Backup failed: ' + err.message); } return;
       case 'reset-go': {
         if (val('reset-word').trim().toUpperCase() !== 'RESET') return O.toast('Type RESET to confirm');
+        try { await O.backupNow('before-reset'); } catch (err) { if (!confirm('The automatic backup failed (' + err.message + '). Reset anyway?')) return; }
         const p = O.profile();
         if (await O.adminOp('Journey reset — Day 1 starts today', () => be.resetJourney(S.today, { name: p.name || 'David', avatarPhoto: p.avatarPhoto || null }))) {
           A.resetAsk = false; A.settings = null;
@@ -405,7 +474,22 @@
       }
       case 'month': { const [y, m] = A.month.split('-').map(Number); A.month = new Date(Date.UTC(y, m - 1 + +d.dir, 1)).toISOString().slice(0, 7); break; }
       case 'metric': A.metric = d.metric; break;
-      case 'day': O.modal(O.dayDetailHTML(d.date)); return;
+      case 'day': openDayEdit(d.date); window.scrollTo(0, 0); break;
+      case 'de-cancel': A.dayEdit = null; break;
+      case 'de-rm': A.dayEdit.entries.splice(+d.i, 1); break;
+      case 'de-lv': A.dayEdit.entries[+d.i].level = +d.lv; break;
+      case 'de-save': case 'de-excuse': case 'de-lost': case 'de-reopen': case 'de-clear': {
+        const de = A.dayEdit, date = de.date, log = S.logs[date], plan = O.planForDate(date);
+        const entries = de.entries.filter((e) => E.isActive(e)).map((e) => ({ exercise: e.exercise, level: e.level, perSet: e.perSet, sets: e.perSet.length, minutes: Math.round(E.minutesOf(e) * 10) / 10 }));
+        let rec, msg;
+        if (d.act === 'de-save') { rec = O.adminDoneLog(date, entries); msg = 'Day saved — totals recalculated'; }
+        if (d.act === 'de-excuse') { rec = { status: 'EXCUSED', entries, points: 0, reason: (de.reason || '').trim(), plan: plan || null, celebrated: true, excusedAt: Date.now() }; msg = 'Day excused — no penalty, streak safe'; }
+        if (d.act === 'de-lost') { rec = { status: 'LOST', entries, points: -O.n0(S.scoring.penalty), planned: E.plannedPoints(plan, S.scoring), pct: 0, complete: false, plannedMinutes: E.plannedMinutes(plan), plan: plan || null, celebrated: true }; msg = 'Marked as skipped'; }
+        if (d.act === 'de-reopen') { rec = { status: 'PENDING', entries: (log && log.entries) || [] }; msg = 'Reopened — David can log and close it again'; }
+        if (d.act === 'de-clear') { if (!confirm('Remove the record of this day?')) return; rec = null; msg = 'Record removed — totals recalculated'; }
+        if (await O.adminOp(msg, () => O.adminSaveDay(date, rec))) A.dayEdit = null;
+        break;
+      }
 
       /* plans */
       case 'plan-new': {
@@ -432,6 +516,7 @@
       case 'd-rm': dayRef(d.k).exercises.splice(+d.i, 1); break;
       case 'd-lv': dayRef(d.k).exercises[+d.i].level = +d.lv; break;
       case 'sl-step': case 'sl-del': case 'sl-add': {
+        if (d.scope === 'day') { const e = A.dayEdit.entries[+d.row]; e.perSet = O.setsEdit(e.exercise, e.perSet, d.act, d); break; }
         const ex = dayRef(d.k).exercises[+d.row];
         ex.targetPerSet = O.setsEdit(ex.exercise, E.setList(E.planEntry(ex)), d.act, d);
         delete ex.targetReps; delete ex.targetSets; delete ex.targetMinutes; break;
@@ -472,6 +557,17 @@
     render();
   });
 
+  /** Restore a backup file over the current journey. */
+  async function restoreFrom(file) {
+    let data;
+    try { data = JSON.parse(await file.text()); } catch (e) { return O.toast('This is not a backup file'); }
+    if (!data || data.app !== 'path-to-olympus') return O.toast('This is not a Path to Olympus backup');
+    if (!confirm(`Restore the backup from ${String(data.exportedAt || '').slice(0, 10)}? Everything now in the app is replaced by it.`)) return;
+    try { await O.backupNow('before-restore'); } catch (e) { /* continue */ }
+    await O.adminOp('Backup restored', () => O.backend().importAll(data));
+    render();
+  }
+
   /** Open when this device has proved the PIN and was not locked. */
   const unlocked = () => !!(S.user && S.isAdmin && O.ADMIN.remembered());
 
@@ -479,7 +575,7 @@
   render();
   O.start('admin');
 
-  if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => {});
+  O.watchUpdates();
 })();
 </script>
 </body>
