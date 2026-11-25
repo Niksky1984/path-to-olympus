@@ -470,3 +470,9 @@ nav.tabs button.on .medallion:not(.has-img) { transform: translateY(-6px) scale(
 .set-row .sx { height: 40px; border: 0; background: none; color: var(--lost); font-size: 18px; }
 .sets-ed .add-set { width: 100%; min-height: 46px; margin-top: 8px; }
 .sheet .exmedia { max-width: min(340px, 62vw); }
+
+/* v4.1: round medallion buttons — glow follows the shape */
+nav.tabs .medallion.has-img { border-radius: 50%; }
+nav.tabs .medallion.has-img img { border-radius: 0; object-fit: contain; }
+nav.tabs button:not(.on) .medallion.has-img { filter: drop-shadow(0 2px 3px rgba(0,0,0,.5)); }
+nav.tabs button.on .medallion.has-img { box-shadow: none; border-radius: 50%; filter: drop-shadow(0 0 6px rgba(255,226,130,.95)) drop-shadow(0 3px 5px rgba(0,0,0,.55)); }
