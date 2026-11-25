@@ -34,6 +34,10 @@
     pick: false,          // "add another exercise" chooser
     confirmClose: false,  // close-the-day confirmation
     photoDraft: undefined,  // undefined = unchanged, null = remove, string = new photo
+    intro: null,            // first-time walkthrough step (0–3) or null
+    timer: null,            // { i, t0 } — a timed set being measured
+    rest: null,             // { end, total } — rest countdown between sets
+    pairMsg: '',
   };
 
   /* ------------------------------- shell ------------------------------- */
@@ -99,7 +103,7 @@
       });
     }
     html += `<div style="margin-top:12px"><button class="btn-gold" data-act="tab" data-tab="trial">${closed ? 'Day closed — see you tomorrow' : "Log today's training"}</button></div></div>`;
-    return html + `${O.horizonsCard()}<p class="motto-line">“${O.MOTTO}”</p>`;
+    return html + `${O.homeGoalsCard()}<p class="motto-line">“${O.MOTTO}”</p>${O.versionHTML()}`;
   }
 
   /* The hero video is checked once, then one <video> element is kept and moved into every
@@ -157,7 +161,7 @@
     let html = `<div class="card"><h2 style="font-size:20px">${O.fmtDate(S.today, 'long')}</h2>
       ${plan && plan.note ? `<p class="muted">${esc(plan.note)}</p>` : ''}
       <p class="small muted">${closed ? '' : !plan || E.isRest(plan) ? 'No exercises planned today — anything you do still counts. Tap + to add one.' : 'Tap an exercise, enter what you did and press OK. You can change it until you close the day.'}</p>
-      ${closed ? `<p class="ok">Day closed · ${O.n0(log.pct)}% · +${O.fmtNum(log.points)} points. The log is locked.</p>` : ''}</div>`;
+      ${closed ? (log.status === 'EXCUSED' ? `<p class="muted"><b>Excused by the Council</b> — rest and recover. Your streak is safe.</p>` : `<p class="ok">Day closed · ${O.n0(log.pct)}% · +${O.fmtNum(log.points)} points. The log is locked.</p>`) : ''}</div>`;
     html += `<div class="tiles">${rows.map((r) => tile(r, closed)).join('')}${closed ? '' : '<button class="tile add" data-act="pick"><b>+</b><span>OTHER</span></button>'}</div>`;
     const bar = st.planned ? st.points / st.planned : st.points ? 1 : 0;
     html += `<div class="card">${O.labeled(st.planned ? 'Points vs plan' : 'Points', st.planned ? `${O.fmtNum(st.points)} / ${O.fmtNum(st.planned)} · ${st.pct}%` : `${O.fmtNum(st.points)} pts`, bar)}
@@ -191,7 +195,8 @@
       <div class="small muted" style="margin-top:10px">Level performed</div>
       <div class="levels" style="margin-top:4px">${[1, 2, 3].map((n) => `<button class="${d.level === n ? 'on' : ''}" data-act="ed-lv" data-lv="${n}">${E.lvl(n).roman}</button>`).join('')}</div>
       <div class="small muted" style="margin-top:12px">${E.isTimed(ed.exId) ? 'Time held in each set' : 'Reps in each set'}</div>
-      ${O.setsEditorHTML(ed.exId, d.perSet)}
+      ${O.setsEditorHTML(ed.exId, d.perSet, '', { timer: E.isTimed(ed.exId), running: V.timer ? V.timer.i : -1 })}
+      ${timerBar()}
       <div class="row small"><span class="grow muted">Total: ${E.isActive(entry) ? (E.isTimed(ed.exId) ? E.fmtSecs(E.volume(entry)) : `${O.fmtNum(E.volume(entry))} ${info.unit}`) + ` in ${E.setsOf(entry)} set(s)` : '—'}</span><span class="ex-pts">${O.fmtNum(pts)} pts</span></div>
       ${!ed.isNew && ed.isExtra ? '<button class="btn-text danger-text" data-act="ed-remove">Remove from today</button>' : ''}
       ${!ed.isNew && !ed.isExtra ? '<button class="btn-text danger-text" data-act="ed-clear">Clear</button>' : ''}
@@ -245,12 +250,12 @@
       });
       html += '</div>';
     });
-    return html + `<p class="motto-line">“${O.MOTTO}”</p>`;
+    return html + `<div class="center" style="margin:10px 0"><button class="btn-line" data-act="intro-replay">Replay the introduction</button></div><p class="motto-line">“${O.MOTTO}”</p>${O.versionHTML()}`;
   }
 
   /* ------------------------------ chronicle ------------------------------ */
 
-  const chronicle = () => O.calendarCard(V.month) + O.totalsCard() + O.trendsCard(V.metric) + O.trajectoryCard() + O.horizonsCard();
+  const chronicle = () => O.calendarCard(V.month) + O.totalsCard() + O.recordsCard() + O.trendsCard(V.metric) + O.trajectoryCard() + O.horizonsCard();
 
   /* -------------------------------- hall -------------------------------- */
 
@@ -291,20 +296,83 @@
       <button class="btn-gold" data-act="save-avatar" ${changed ? '' : 'disabled'}>Save avatar</button>`;
   }
 
+  /* --------------------------- pairing (first open) --------------------------- */
+
+  function pairScreen() {
+    const ready = S.pair && S.pair.ready;
+    return `<div class="card center pin-card">${O.laurelSVG(90)}<h2>Welcome to the Path</h2>
+      <p class="muted small">${ready ? 'Enter the code the Council gave you. You only do this once on this phone.' : 'The Council has not set your code yet. Ask for it, then open the app again.'}</p>
+      ${ready ? `<input id="pair-code" class="pin-box" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="8" autocomplete="off" placeholder="Code">
+      ${V.pairMsg ? `<p class="bad small">${esc(V.pairMsg)}</p>` : ''}<button class="btn-gold" data-act="pair-go">Begin</button>` : `<button class="btn-line" data-act="pair-retry">Try again</button>`}</div>`;
+  }
+
+  /* --------------------------- first-time walkthrough --------------------------- */
+
+  const INTRO = [
+    () => ({ art: O.mediaURL('nav_home'), title: `Welcome, ${O.profile().name || 'hero'}`, text: 'Ten years. One road. Every day you train, you climb a little higher toward Olympus. This app keeps the record of your climb.' }),
+    () => ({ art: O.mediaURL('nav_trial'), title: 'Your daily Trial', text: 'Each square is an exercise from today\'s plan. Tap it, enter every set you really did, press OK. When you are finished, close the day — your video and points are waiting.' }),
+    () => ({ circles: true, title: 'The Chronicle', text: 'Every day becomes a circle: completed, incomplete, or skipped. A skipped day costs points and breaks your streak — so close every planned day, even a small one.' }),
+    () => ({ art: O.mediaURL('medal_first_step'), title: 'Glory and medals', text: 'Points become Glory. Days in a row become your streak. Medals and coats of arms wait in the Hall. The road is mastered by the one who walks it.' }),
+  ];
+  function introScreen() {
+    const step = V.intro, s = INTRO[step]();
+    const circles = s.circles ? `<div class="intro-circles">${[['circle_done', 'Completed'], ['circle_incomplete', 'Incomplete'], ['circle_skipped', 'Skipped']].map(([k, l]) => {
+      const u = O.mediaURL(k); return `<div>${u ? `<img src="${esc(u)}" alt="">` : `<i class="dot ${k.slice(7)}"></i>`}<span>${l}</span></div>`; }).join('')}</div>` : '';
+    return `<div class="intro"><div class="intro-card">
+      <div class="intro-art">${circles || (s.art ? `<img src="${esc(s.art)}" alt="">` : O.laurelSVG(150))}</div>
+      <h2>${esc(s.title)}</h2><p>${esc(s.text)}</p>
+      <div class="intro-dots">${INTRO.map((_, i) => `<i class="${i === step ? 'on' : ''}"></i>`).join('')}</div>
+      <div class="intro-btns">${step < INTRO.length - 1 ? '<button class="btn-text" data-act="intro-skip">Skip</button><button class="btn-gold" data-act="intro-next">Next</button>' : '<button class="btn-gold" data-act="intro-done">Begin the path</button>'}</div>
+    </div></div>`;
+  }
+
+  /* ------------------------------- timers ------------------------------- */
+
+  let wakeLock = null;
+  const keepAwake = async (on) => {
+    try { if (on && 'wakeLock' in navigator && !wakeLock) wakeLock = await navigator.wakeLock.request('screen'); if (!on && wakeLock) { await wakeLock.release(); wakeLock = null; } } catch (e) { /* not supported */ }
+  };
+  function beep() {
+    try { const a = new (window.AudioContext || window.webkitAudioContext)(); [0, 0.25].forEach((t) => { const o = a.createOscillator(), g = a.createGain(); o.frequency.value = 880; o.connect(g); g.connect(a.destination); g.gain.setValueAtTime(0.25, a.currentTime + t); o.start(a.currentTime + t); o.stop(a.currentTime + t + 0.15); }); } catch (e) { /* silent */ }
+    try { navigator.vibrate && navigator.vibrate([200, 100, 200]); } catch (e) { /* none */ }
+  }
+  function stopSetTimer() {
+    if (!V.timer || !V.edit) { V.timer = null; return; }
+    const secs = Math.max(1, Math.round((Date.now() - V.timer.t0) / 1000));
+    V.edit.draft.perSet[V.timer.i] = secs;
+    V.timer = null; keepAwake(false);
+  }
+  /* live numbers without re-rendering the pop-up */
+  setInterval(() => {
+    if (V.timer) { const el = document.getElementById('timer-live'); if (el) el.textContent = E.fmtSecs(Math.floor((Date.now() - V.timer.t0) / 1000)); }
+    if (V.rest) {
+      const left = Math.ceil((V.rest.end - Date.now()) / 1000);
+      const el = document.getElementById('rest-live');
+      if (left <= 0) { V.rest = null; beep(); O.toast('Rest is over — next set!'); render(); }
+      else if (el) el.textContent = E.fmtSecs(left);
+    }
+  }, 250);
+  function timerBar() {
+    return `<div class="rest-row">${V.rest ? `<span class="rest-on">Rest <b id="rest-live">${E.fmtSecs(Math.max(0, Math.ceil((V.rest.end - Date.now()) / 1000)))}</b></span><button class="chip" data-act="rest-stop">Stop</button>`
+      : `<span class="muted small">Rest timer</span>${[30, 60, 90, 120].map((t) => `<button class="chip" data-act="rest" data-t="${t}">${t < 60 ? t + ' s' : t / 60 + ' min'}</button>`).join('')}`}</div>`;
+  }
+
   /* ------------------------------- render ------------------------------- */
 
   function render() {
     const app = document.getElementById('app');
+    if (S.pair && !S.pair.registered) { app.innerHTML = topbar() + `<main>${pairScreen()}</main>`; return; }
     if (!O.loaded()) {
       app.innerHTML = topbar() + `<div class="loading">${O.laurelSVG(120)}<div>Ascending the mountain…</div></div>`;
       return;
     }
+    if (V.intro === null && !localStorage.getItem('olympus_intro_done')) V.intro = 0;
     const views = { home, trial, chronicle, hall, avatar, codex };
     const bg = V.tab === 'hall' ? O.mediaURL('hall_bg') : null;
     document.body.classList.toggle('hall-bg', !!bg);
     document.body.style.backgroundImage = bg ? `url('${bg}')` : '';
     if (O.todayClosed()) { V.edit = null; V.pick = false; V.confirmClose = false; }
-    const sheet = V.edit ? editorSheet() : V.pick ? pickSheet() : V.confirmClose ? confirmSheet() : '';
+    const sheet = V.intro !== null ? introScreen() : V.edit ? editorSheet() : V.pick ? pickSheet() : V.confirmClose ? confirmSheet() : '';
     // keep an open pop-up steady: no slide-in again and same scroll position after each tap
     const old = app.querySelector('.sheet'), oldTop = old ? old.scrollTop : 0;
     app.innerHTML = topbar() + `<main>${views[V.tab]()}</main>` + (V.tab === 'avatar' ? '' : nav()) + sheet;
@@ -328,12 +396,37 @@
       case 'pick': V.pick = true; break;
       case 'pick-ex': V.pick = false; openEditor(d.ex); break;
       case 'ed-lv': V.edit.draft.level = +d.lv; break;
-      case 'sl-step': case 'sl-del': case 'sl-add': V.edit.draft.perSet = O.setsEdit(V.edit.exId, V.edit.draft.perSet, d.act, d); break;
-      case 'ed-ok': { const ed = V.edit; V.edit = null; O.updateEntry(ed.exId, (x) => ({ ...x, ...ed.draft })); return; }
+      case 'sl-step': case 'sl-del': case 'sl-add':
+        if (V.timer) stopSetTimer();
+        V.edit.draft.perSet = O.setsEdit(V.edit.exId, V.edit.draft.perSet, d.act, d); break;
+      case 'sl-timer': {
+        if (V.timer && V.timer.i === +d.i) { stopSetTimer(); break; }
+        if (V.timer) stopSetTimer();
+        V.timer = { i: +d.i, t0: Date.now() }; V.rest = null; keepAwake(true); break;
+      }
+      case 'sl-timed-new': {
+        if (V.timer) stopSetTimer();
+        V.edit.draft.perSet = V.edit.draft.perSet.concat([0]);
+        V.timer = { i: V.edit.draft.perSet.length - 1, t0: Date.now() }; V.rest = null; keepAwake(true); break;
+      }
+      case 'rest': V.rest = { end: Date.now() + +d.t * 1000 }; keepAwake(true); break;
+      case 'rest-stop': V.rest = null; keepAwake(false); break;
+      case 'intro-next': V.intro = Math.min(INTRO.length - 1, V.intro + 1); break;
+      case 'intro-skip': case 'intro-done': V.intro = null; localStorage.setItem('olympus_intro_done', '1'); break;
+      case 'intro-replay': V.intro = 0; break;
+      case 'pair-retry': O.refreshDavid(); return;
+      case 'pair-go': {
+        const code = (document.getElementById('pair-code') || {}).value || '';
+        if (!/^\d{4,8}$/.test(code)) { V.pairMsg = 'The code is 4–8 digits.'; break; }
+        V.pairMsg = '';
+        O.pairDevice(code).catch((err) => { V.pairMsg = /permission|denied/i.test(err.code || err.message) ? 'Wrong code — ask the Council.' : 'Could not connect: ' + err.message; render(); });
+        return;
+      }
+      case 'ed-ok': { if (V.timer) stopSetTimer(); keepAwake(false); V.rest = null; const ed = V.edit; V.edit = null; O.updateEntry(ed.exId, (x) => ({ ...x, ...ed.draft })); return; }
       case 'ed-clear': { const ex = V.edit.exId; V.edit = null; O.updateEntry(ex, (x) => ({ ...x, perSet: [] })); return; }
       case 'ed-remove': { const ex = V.edit.exId; V.edit = null; O.removeExtra(ex); return; }
-      case 'ed-cancel': case 'sheet-close': V.edit = null; V.pick = false; V.confirmClose = false; break;
-      case 'sheet-bg': if (e.target !== el) return; V.edit = null; V.pick = false; V.confirmClose = false; break;
+      case 'ed-cancel': case 'sheet-close': V.timer = null; V.rest = null; keepAwake(false); V.edit = null; V.pick = false; V.confirmClose = false; break;
+      case 'sheet-bg': if (e.target !== el || V.intro !== null) return; V.timer = null; V.rest = null; keepAwake(false); V.edit = null; V.pick = false; V.confirmClose = false; break;
       case 'close-day': if (O.todayStats().canClose) V.confirmClose = true; break;
       case 'close-confirm': V.confirmClose = false; O.closeToday(); break;
       case 'goto': { const t = document.getElementById(d.id); if (t) t.scrollIntoView({ behavior: 'smooth', block: 'start' }); return; }
@@ -363,7 +456,7 @@
   render();
   O.start('david');
 
-  if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => {});
+  O.watchUpdates();
 })();
 </script>
 </body>
