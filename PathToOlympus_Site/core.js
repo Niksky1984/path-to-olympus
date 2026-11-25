@@ -673,7 +673,7 @@
   const mediaCache = {};
   const IMG_EXT = ['webp', 'png', 'jpg', 'jpeg', 'gif'];
   /** Bump when you replace pictures in media/ so phones load the new ones at once. */
-  const MEDIA_V = 2;
+  const MEDIA_V = 3;
   /**
    * URL for a media slot: the Admin's link wins; otherwise look for media/<key>.webp|png|jpg|jpeg|gif
    * next to index.html (checked once, then remembered). Returns null while unknown / missing.
