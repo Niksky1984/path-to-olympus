@@ -282,6 +282,12 @@
         <div class="row" style="margin-top:8px"><div class="grow">Journey start</div><button class="icon" data-act="s-start" data-d="-1">‹</button><b>${O.fmtDate(st.start)}</b><button class="icon" data-act="s-start" data-d="1">›</button></div>
         <p class="muted small">Changing the start re-checks skipped days from the new date. Days already closed or skipped keep their status.</p>
         <button class="btn-text" data-act="s-start-save" ${st.start === p.startDate ? 'disabled' : ''}>Save start date</button></div>
+      <div class="card danger-zone">${O.section('Start again')}
+        <p class="small">Deletes every closed day, skipped day, medal and coat of arms, and sets points and streaks to 0. The journey starts again today.
+        <b>Plans, targets, scoring, pictures, videos, the Codex, David's name and photo stay.</b></p>
+        ${A.resetAsk ? `<p class="small">Type <b>RESET</b> to confirm:</p><input id="reset-word" autocomplete="off" style="text-transform:uppercase">
+          <div class="row" style="margin-top:8px"><button class="btn-line grow" data-act="reset-cancel">Cancel</button><button class="btn-line danger grow" data-act="reset-go">Reset everything</button></div>`
+        : `<button class="btn-line danger" data-act="reset-ask">Reset David's journey…</button>`}</div>
       <div class="card">${O.section('Admin PIN')}
         <p class="muted small">One PIN for all your devices. Changing it signs out your other devices until they enter the new PIN.</p>
         <div class="row"><input id="np1" class="pin-box grow" type="password" inputmode="numeric" maxlength="8" placeholder="New PIN"><input id="np2" class="pin-box grow" type="password" inputmode="numeric" maxlength="8" placeholder="Repeat"></div>
@@ -374,6 +380,16 @@
         if (p1 !== p2) return O.toast('The two PINs are different');
         const hash = await O.ADMIN.hash(p1);
         if (await O.adminOp('PIN changed', () => be.changeAdminPin(S.user.uid, hash))) await O.ADMIN.refresh();
+        break;
+      }
+      case 'reset-ask': A.resetAsk = true; break;
+      case 'reset-cancel': A.resetAsk = false; break;
+      case 'reset-go': {
+        if (val('reset-word').trim().toUpperCase() !== 'RESET') return O.toast('Type RESET to confirm');
+        const p = O.profile();
+        if (await O.adminOp('Journey reset — Day 1 starts today', () => be.resetJourney(S.today, { name: p.name || 'David', avatarPhoto: p.avatarPhoto || null }))) {
+          A.resetAsk = false; A.settings = null;
+        }
         break;
       }
       case 'lock': O.ADMIN.lock(); A.pinMsg = ''; break;
