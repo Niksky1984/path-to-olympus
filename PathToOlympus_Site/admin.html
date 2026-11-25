@@ -19,7 +19,7 @@
 <script src="core.js"></script>
 <script>
 /* =============================================================================
- * Admin console: login → PIN → Overview · Plans · Orders · Targets · Settings
+ * Admin console: PIN → Overview · Plans · Targets · Scoring · Media · Guide · Settings
  * ========================================================================== */
 (function () {
   'use strict';
@@ -27,7 +27,7 @@
 
   const A = {
     sub: 'overview',
-    unlocked: sessionStorage.getItem('olympus_admin_unlocked') === '1',
+    pinMsg: '',
     busy: false,
     planDraft: null,
     openDay: 'MONDAY',
@@ -45,30 +45,26 @@
 
   function topbar() {
     const p = O.profile();
-    const showLock = S.isAdmin && A.unlocked;
+    const showLock = unlocked();
     return `<header class="topbar"><div class="in">${O.laurelSVG(34, O.C.gold)}
-      <div class="grow"><h1>COUNCIL OF OLYMPUS</h1><div class="motto">${S.isAdmin && A.unlocked && O.loaded() ? `${esc(p.name)}: ${O.n0(p.score)} pts · streak ${O.n0(p.currentStreak)} · ${O.n0(p.daysDone)} done / ${O.n0(p.daysLost)} lost` : O.MOTTO}</div></div>
+      <div class="grow"><h1>COUNCIL OF OLYMPUS</h1><div class="motto">${unlocked() && O.loaded() ? `${esc(p.name)}: ${O.n0(p.score)} pts · streak ${O.n0(p.currentStreak)} · ${O.n0(p.daysDone)} done / ${O.n0(p.daysLost)} lost` : O.MOTTO}</div></div>
       ${showLock ? '<button class="back" data-act="lock" aria-label="Lock">🔒</button>' : ''}
     </div><div class="meander"></div></header>${O.demoBarHTML()}${S.error ? `<div class="error-bar">${esc(S.error)}</div>` : ''}`;
   }
 
   /* ------------------------------ login / PIN ------------------------------ */
 
-  function login() {
-    return `<div class="card" style="margin-top:20px"><div class="center">${O.laurelSVG(100)}<h2>Admin sign-in</h2>
-      <p class="muted small">${S.demo ? 'Demo mode: any e-mail and password work.' : 'Use the Admin account from Firebase Authentication.'} Choose a 4–8 digit PIN for quick access on this device.</p></div>
-      <label class="field"><span>Admin e-mail</span><input id="lg-email" type="email" autocomplete="username" value="${esc(window.OLYMPUS_CONFIG.adminEmail || '')}"></label>
-      <label class="field"><span>Password</span><input id="lg-pass" type="password" autocomplete="current-password"></label>
-      <label class="field"><span>New PIN</span><input id="lg-pin" type="password" inputmode="numeric" maxlength="8"></label>
-      <button class="btn-gold" data-act="login" ${A.busy ? 'disabled' : ''}>${A.busy ? 'Signing in…' : 'Enter the council'}</button></div>`;
-  }
-
+  /** One screen: the PIN. First time ever it creates the PIN; on a new phone it checks it. */
   function pinScreen() {
-    const creating = !O.PIN.has();
-    return `<div class="card center" style="margin-top:30px"><div style="font-size:40px">🔒</div><h2>${creating ? 'Create an Admin PIN' : 'Enter Admin PIN'}</h2>
-      <label class="field" style="max-width:220px;margin:14px auto"><input id="pin" type="password" inputmode="numeric" maxlength="8" style="text-align:center;font-size:22px;letter-spacing:.3em"></label>
-      <button class="btn-gold" data-act="${creating ? 'pin-set' : 'pin-check'}" style="max-width:220px;margin:0 auto">${creating ? 'Set PIN' : 'Unlock'}</button>
-      <p><button class="btn-text" data-act="signout">Use a different account</button></p></div>`;
+    const st = S.adminState;
+    if (!S.user || !st) return `<div class="empty">${O.laurelSVG(100)}<p>Opening the council…</p></div>`;
+    const creating = !st.ready;
+    const box = (id, ph) => `<input id="${id}" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="8" autocomplete="off" placeholder="${ph}" class="pin-box">`;
+    return `<div class="card center pin-card">${O.laurelSVG(90)}<h2>${creating ? 'Create your Admin PIN' : 'Enter Admin PIN'}</h2>
+      <p class="muted small">${creating ? 'Choose 4–8 digits. This one PIN opens the Admin on any phone or computer.' : st.registered ? 'This device is already trusted.' : 'First time on this device — the PIN connects it.'}</p>
+      ${box('pin', 'PIN')}${creating ? box('pin2', 'Repeat PIN') : ''}
+      ${A.pinMsg ? `<p class="bad small">${esc(A.pinMsg)}</p>` : ''}
+      <button class="btn-gold" data-act="pin-go" ${A.busy ? 'disabled' : ''}>${A.busy ? 'Checking…' : creating ? 'Create PIN' : 'Enter the council'}</button></div>`;
   }
 
   /* -------------------------------- overview -------------------------------- */
@@ -286,20 +282,23 @@
         <div class="row" style="margin-top:8px"><div class="grow">Journey start</div><button class="icon" data-act="s-start" data-d="-1">‹</button><b>${O.fmtDate(st.start)}</b><button class="icon" data-act="s-start" data-d="1">›</button></div>
         <p class="muted small">Changing the start re-checks skipped days from the new date. Days already closed or skipped keep their status.</p>
         <button class="btn-text" data-act="s-start-save" ${st.start === p.startDate ? 'disabled' : ''}>Save start date</button></div>
-      <div class="card">${O.section('Security')}<button class="btn-line" data-act="pin-reset">Change PIN</button> <button class="btn-line danger" data-act="signout">Sign out</button></div>`;
+      <div class="card">${O.section('Admin PIN')}
+        <p class="muted small">One PIN for all your devices. Changing it signs out your other devices until they enter the new PIN.</p>
+        <div class="row"><input id="np1" class="pin-box grow" type="password" inputmode="numeric" maxlength="8" placeholder="New PIN"><input id="np2" class="pin-box grow" type="password" inputmode="numeric" maxlength="8" placeholder="Repeat"></div>
+        <button class="btn-line" data-act="pin-change" style="margin-top:8px">Change PIN</button>
+        <p style="margin-top:12px"><button class="btn-text" data-act="lock">🔒 Lock now</button> <button class="btn-text danger-text" data-act="forget">Forget this device</button></p></div>`;
   }
 
   /* --------------------------------- render --------------------------------- */
 
   let pending = false;
-  const typing = () => { const a = document.activeElement; return a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA') && a.id !== 'pin'; };
+  const typing = () => { const a = document.activeElement; return a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA'); };
 
   function render() {
     if (!A.month) A.month = S.today.slice(0, 7);
     const app = document.getElementById('app');
     let body;
-    if (!S.user || !S.isAdmin) body = login();
-    else if (!A.unlocked) body = pinScreen();
+    if (!unlocked()) body = pinScreen();
     else if (!O.loaded()) body = `<div class="empty">${O.laurelSVG(100)}<p>Loading the chronicle…</p></div>`;
     else {
       const tabs = [['overview', 'Overview'], ['plans', 'Plans'], ['targets', 'Targets'], ['scoring', 'Scoring'], ['media', 'Media'], ['guide', 'Guide'], ['settings', 'Settings']];
@@ -343,7 +342,7 @@
   });
 
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && e.target.id === 'pin') document.querySelector('[data-act^="pin-"]')?.click();
+    if (e.key === 'Enter' && (e.target.id === 'pin' || e.target.id === 'pin2')) document.querySelector('[data-act="pin-go"]')?.click();
   });
 
   document.addEventListener('click', async (e) => {
@@ -352,23 +351,34 @@
     const d = el.dataset, be = O.backend();
     switch (d.act) {
       /* auth */
-      case 'login': {
-        const email = val('lg-email'), pass = val('lg-pass'), pin = val('lg-pin');
-        if (!email || (!S.demo && !pass)) return O.toast('Enter e-mail and password');
-        if (!/^\d{4,8}$/.test(pin)) return O.toast('PIN must be 4–8 digits');
-        A.busy = true; render();
-        try { await be.signInAdmin(email, pass); await O.PIN.set(pin); unlock(); }
-        catch (err) { O.toast('Sign-in failed: ' + err.message); }
-        A.busy = false; render(); return;
+      case 'pin-go': {
+        const pin = val('pin'), st = S.adminState;
+        if (!/^\d{4,8}$/.test(pin)) { A.pinMsg = 'The PIN is 4–8 digits.'; break; }
+        if (!st.ready && pin !== val('pin2')) { A.pinMsg = 'The two PINs are different.'; break; }
+        A.busy = true; A.pinMsg = ''; render();
+        const hash = await O.ADMIN.hash(pin);
+        try {
+          if (!st.ready) await be.createAdminPin(S.user.uid, hash);
+          else if (st.registered && st.hash === hash) { /* known device, right PIN */ }
+          else await be.registerAdmin(S.user.uid, hash); // the server says no if the PIN is wrong
+          O.ADMIN.remember();
+          await O.ADMIN.refresh();
+        } catch (err) {
+          A.pinMsg = /permission|denied|wrong/i.test(err.code || err.message) ? 'Wrong PIN.' : 'Could not check the PIN: ' + err.message;
+        }
+        A.busy = false; break;
       }
-      case 'pin-set': { const pin = val('pin'); if (!/^\d{4,8}$/.test(pin)) return O.toast('PIN must be 4–8 digits'); await O.PIN.set(pin); unlock(); break; }
-      case 'pin-check': {
-        if (await O.PIN.verify(val('pin'))) { unlock(); break; }
-        O.toast('Wrong PIN'); document.getElementById('pin').value = ''; return;
+      case 'pin-change': {
+        const p1 = val('np1'), p2 = val('np2');
+        if (!/^\d{4,8}$/.test(p1)) return O.toast('The PIN is 4–8 digits');
+        if (p1 !== p2) return O.toast('The two PINs are different');
+        const hash = await O.ADMIN.hash(p1);
+        if (await O.adminOp('PIN changed', () => be.changeAdminPin(S.user.uid, hash))) await O.ADMIN.refresh();
+        break;
       }
-      case 'pin-reset': O.PIN.clear(); lockAdmin(); break;
-      case 'lock': lockAdmin(); break;
-      case 'signout': lockAdmin(); O.PIN.clear(); await be.signOutAdmin(); break;
+      case 'lock': O.ADMIN.lock(); A.pinMsg = ''; break;
+      case 'forget': if (!confirm('Forget this device? You will need the PIN to open the Admin here again.')) return;
+        O.ADMIN.lock(); try { await be.forgetAdmin(S.user.uid); } catch (err) { console.warn(err); } await O.ADMIN.refresh(); break;
 
       /* navigation */
       case 'sub': A.sub = d.sub; A.settings = null; A.targetDrafts = {}; A.scDraft = null; A.guideDraft = null; window.scrollTo(0, 0); break;
@@ -445,8 +455,8 @@
     render();
   });
 
-  function unlock() { A.unlocked = true; sessionStorage.setItem('olympus_admin_unlocked', '1'); }
-  function lockAdmin() { A.unlocked = false; sessionStorage.removeItem('olympus_admin_unlocked'); }
+  /** Open when this device has proved the PIN and was not locked. */
+  const unlocked = () => !!(S.user && S.isAdmin && O.ADMIN.remembered());
 
   O.onChange(softRender);
   render();
