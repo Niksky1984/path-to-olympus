@@ -43,7 +43,7 @@
     return `<header class="topbar"><div class="in">
       ${back ? '<button class="back" data-act="tab" data-tab="home" aria-label="Back">‹</button>' : O.laurelSVG(34, O.C.gold)}
       <div class="grow"><h1>PATH TO OLYMPUS</h1><div class="motto">${O.MOTTO}</div></div>
-      <button class="avatar-btn" data-act="tab" data-tab="avatar" aria-label="Change avatar">${O.avatarHTML(O.profile(), 44)}</button>
+      <button class="avatar-btn" data-act="tab" data-tab="avatar" aria-label="Change avatar">${O.avatarHTML(O.profile(), 132)}</button>
     </div><div class="meander"></div></header>${O.demoBarHTML()}${S.error ? `<div class="error-bar">${esc(S.error)}</div>` : ''}`;
   }
 
@@ -76,10 +76,13 @@
     const dailyText = closed ? `Closed · ${O.n0(log.pct)}% · +${O.fmtNum(log.points)} pts`
       : st.planned || st.points ? `${O.fmtNum(st.points)} / ${O.fmtNum(st.planned)} pts · ${st.pct}%` : 'No plan today';
     const wk = O.week();
-    let html = `<section class="hero">${O.laurelSVG(140, O.C.gold, 0.25)}
-      <h2>Hail, ${esc(p.name)}!</h2><div class="sub">Day ${dayNo.toLocaleString()} of 3,652 on the Path to Olympus</div>
+    // the "Hail" window: David's own 16:9 video (media/video_hero.mp4), else a 16:9 picture (hero_bg), else the bronze card
+    const vid = heroVideoReady(), pic = vid ? null : O.mediaURL('hero_bg');
+    let html = `<section class="hero ${vid || pic ? 'has-media' : ''}">
+      ${vid || pic ? `<div class="hero-media" id="hero-media">${pic ? `<img src="${esc(pic)}" alt="">` : ''}</div><div class="hero-shade"></div>` : O.laurelSVG(140, O.C.gold, 0.25)}
+      <div class="hero-txt"><h2>Hail, ${esc(p.name)}!</h2><div class="sub">Day ${dayNo.toLocaleString()} of 3,652 on the Path to Olympus</div>
       <div class="nums"><div><div class="eyebrow">GLORY</div><div class="score">${O.fmtNum(p.score)}</div></div>
-      <div class="streak">🔥 <b>${O.n0(p.currentStreak)}</b><small>day streak · best ${O.n0(p.bestStreak)}</small></div></div></section>`;
+      <div class="streak">🔥 <b>${O.n0(p.currentStreak)}</b><small>day streak · best ${O.n0(p.bestStreak)}</small></div></div></div></section>`;
     html += `<div class="card">${O.section('Progress')}${O.labeled('Today', dailyText, closed ? Math.min(1, O.n0(log.pct) / 100) : st.planned ? st.points / st.planned : 0)}${O.labeled('This week', `${wk.done} / ${wk.planned} days closed`, wk.planned ? wk.done / wk.planned : 0)}</div>`;
 
     const plan = O.todayPlan();
@@ -87,26 +90,47 @@
     if (!plan || E.isRest(plan)) {
       html += `<p class="muted">${plan ? 'Rest day in the plan' : 'No plan for today'} — but you can still train and close the day.</p>`;
     } else {
-      html += `<h3 style="font-size:17px">${O.fmtNum(st.planned)} points · ${st.plannedMinutes} minutes</h3>${plan.note ? `<p class="muted small">${esc(plan.note)}</p>` : ''}`;
+      html += `<h3 style="font-size:17px">${O.fmtNum(st.planned)} points${st.plannedMinutes ? ` · ${st.plannedMinutes} min timed` : ''}</h3>${plan.note ? `<p class="muted small">${esc(plan.note)}</p>` : ''}`;
       plan.exercises.forEach((ex) => {
         const info = E.EX[ex.exercise];
         const done = O.todayEntries().find((e) => e.exercise === ex.exercise && E.isActive(e));
         html += `<div class="ex-row"><span class="check ${done ? 'on' : ''}">✓</span><div class="grow"><div>${esc(info.name)}</div>
-          <div class="muted small">${O.n0(ex.targetReps)} ${info.unit} × ${O.n0(ex.targetSets)} sets · ${O.n0(ex.targetMinutes)} min</div></div>${O.levelBadge(ex.level)}</div>`;
+          <div class="muted small">${esc(E.fmtSets(E.planEntry(ex)))}</div></div>${O.levelBadge(ex.level)}</div>`;
       });
     }
     html += `<div style="margin-top:12px"><button class="btn-gold" data-act="tab" data-tab="trial">${closed ? 'Day closed — see you tomorrow' : "Log today's training"}</button></div></div>`;
     return html + `${O.horizonsCard()}<p class="motto-line">“${O.MOTTO}”</p>`;
   }
 
-  /* -------------------------------- trial -------------------------------- */
-
-  function stepper(label, field, value, step, max) {
-    return `<div class="stepper"><label>${esc(label)}</label><div class="box">
-      <button data-act="ed-step" data-field="${field}" data-d="${-step}" ${value <= 0 ? 'disabled' : ''} aria-label="Less">−</button>
-      <b>${value}</b>
-      <button data-act="ed-step" data-field="${field}" data-d="${step}" ${value >= max ? 'disabled' : ''} aria-label="More">+</button></div></div>`;
+  /* The hero video is checked once, then one <video> element is kept and moved into every
+     re-render, so it keeps playing instead of restarting each time something changes. */
+  const HERO = { state: 'unknown', el: null };
+  function heroVideoReady() {
+    if (HERO.state === 'unknown') {
+      HERO.state = 'checking';
+      if (S.media.slots.video_hero) { HERO.state = 'yes'; return true; }
+      fetch(O.videoURL('hero'), { method: 'HEAD', cache: 'no-store' })
+        .then((r) => { HERO.state = r.ok ? 'yes' : 'no'; if (r.ok) render(); })
+        .catch(() => { HERO.state = 'no'; });
+    }
+    return HERO.state === 'yes';
   }
+  function mountHeroVideo() {
+    const slot = document.getElementById('hero-media');
+    if (!slot || HERO.state !== 'yes') return;
+    if (!HERO.el) {
+      const v = document.createElement('video');
+      Object.assign(v, { muted: true, loop: true, autoplay: true, playsInline: true, preload: 'auto' });
+      v.setAttribute('muted', ''); v.setAttribute('playsinline', '');
+      v.onerror = () => { HERO.state = 'no'; HERO.el = null; render(); };
+      v.src = O.videoURL('hero');
+      HERO.el = v;
+    }
+    slot.appendChild(HERO.el);
+    if (HERO.el.paused) HERO.el.play().catch(() => {});
+  }
+
+  /* -------------------------------- trial -------------------------------- */
 
   /** One square per exercise: the plan first, then anything extra David added. */
   function tile(row, closed) {
@@ -116,8 +140,8 @@
     const level = e ? e.level : p.level;
     const active = E.isActive(e);
     const img = O.exerciseMediaURL(exId, level);
-    const sub = active ? `${O.fmtNum(E.exercisePoints(e, S.scoring))} pts · ${O.n0(e.reps)}×${Math.max(1, O.n0(e.sets))}${e.minutes ? ` · ${e.minutes}′` : ''}`
-      : p ? `${O.n0(p.targetReps)}×${O.n0(p.targetSets)} · ${O.n0(p.targetMinutes)}′` : 'not logged';
+    const sub = active ? `${O.fmtNum(E.exercisePoints(e, S.scoring))} pts<br>${esc(E.fmtSets(e))}`
+      : p ? E.fmtSets(E.planEntry(p)) : 'not logged';
     return `<button class="tile ${active ? 'done' : ''} ${p ? '' : 'extra'}" data-act="open-ex" data-ex="${exId}" ${closed ? 'disabled' : ''}>
       ${img ? `<img src="${esc(img)}" alt="">` : `<span class="t-emblem">${O.laurelSVG(64, O.C.gold, 0.7)}</span>`}<span class="shade"></span>
       <span class="t-lvl">${p ? E.lvl(level).roman : '+ ' + E.lvl(level).roman}</span><span class="t-ok">✓</span>
@@ -137,7 +161,7 @@
     html += `<div class="tiles">${rows.map((r) => tile(r, closed)).join('')}${closed ? '' : '<button class="tile add" data-act="pick"><b>+</b><span>OTHER</span></button>'}</div>`;
     const bar = st.planned ? st.points / st.planned : st.points ? 1 : 0;
     html += `<div class="card">${O.labeled(st.planned ? 'Points vs plan' : 'Points', st.planned ? `${O.fmtNum(st.points)} / ${O.fmtNum(st.planned)} · ${st.pct}%` : `${O.fmtNum(st.points)} pts`, bar)}
-      <div class="muted small" style="margin:-4px 0 10px">Time ${st.minutes} / ${st.plannedMinutes} min · ${st.exercisesDone} exercise(s) logged</div>
+      <div class="muted small" style="margin:-4px 0 10px">${st.minutes || st.plannedMinutes ? `Timed ${st.minutes} / ${st.plannedMinutes} min · ` : ''}${st.exercisesDone} exercise(s) logged</div>
       ${closed ? '' : `<button class="btn-gold" data-act="close-day" ${st.canClose ? '' : 'disabled'}>Close the day</button>
       ${st.canClose ? '' : '<p class="muted small center">Log at least one exercise to close the day.</p>'}`}</div>`;
     return html + `<p class="motto-line">“${O.MOTTO}”</p>`;
@@ -148,8 +172,9 @@
   function openEditor(exId) {
     const row = O.todayRows().find((r) => (r.planned ? r.planned.exercise : r.entry.exercise) === exId);
     const p = row && row.planned, e = row && row.entry;
-    const base = e || { level: p ? p.level : 1, reps: 0, sets: 0, minutes: 0 };
-    V.edit = { exId, isNew: !row, isExtra: !p, draft: { level: base.level || 1, reps: O.n0(base.reps), sets: O.n0(base.sets), minutes: O.n0(base.minutes) } };
+    // start from what was logged; otherwise from the plan (just tap OK if done as planned); extras get one set
+    const list = E.isActive(e) ? E.setList(e) : p ? E.setList(E.planEntry(p)) : [E.EX[exId].dflt];
+    V.edit = { exId, isNew: !row, isExtra: !p, draft: { level: (e && e.level) || (p && p.level) || 1, perSet: list } };
   }
 
   function editorSheet() {
@@ -162,15 +187,12 @@
       <div class="row"><h3 class="grow">${esc(info.name)}</h3>${p ? O.levelBadge(p.level) : '<span class="extra-tag">EXTRA</span>'}</div>
       ${O.exerciseMediaHTML(ed.exId, d.level)}
       <p class="small">${esc(O.guideText(E.guideExKey(ed.exId, d.level)))}</p>
-      ${p ? `<div class="ex-plan">Plan: ${E.lvl(p.level).label} · ${O.n0(p.targetReps)} ${info.unit} × ${O.n0(p.targetSets)} sets · ${O.n0(p.targetMinutes)} min</div>` : ''}
+      ${p ? `<div class="ex-plan">Plan: ${E.lvl(p.level).label} · ${esc(E.fmtSets(E.planEntry(p)))}</div>` : ''}
       <div class="small muted" style="margin-top:10px">Level performed</div>
       <div class="levels" style="margin-top:4px">${[1, 2, 3].map((n) => `<button class="${d.level === n ? 'on' : ''}" data-act="ed-lv" data-lv="${n}">${E.lvl(n).roman}</button>`).join('')}</div>
-      <div class="steppers">
-        ${stepper(info.unit + ' per set', 'reps', d.reps, info.unit === 'seconds' ? 5 : 1, 9999)}
-        ${stepper('Sets', 'sets', d.sets, 1, 99)}
-        ${stepper('Minutes', 'minutes', d.minutes, 1, 600)}
-      </div>
-      <div class="row small"><span class="grow muted">Total: ${E.isActive(entry) ? O.fmtNum(E.volume(entry)) : 0} ${info.unit}</span><span class="ex-pts">${O.fmtNum(pts)} pts</span></div>
+      <div class="small muted" style="margin-top:12px">${E.isTimed(ed.exId) ? 'Time held in each set' : 'Reps in each set'}</div>
+      ${O.setsEditorHTML(ed.exId, d.perSet)}
+      <div class="row small"><span class="grow muted">Total: ${E.isActive(entry) ? (E.isTimed(ed.exId) ? E.fmtSecs(E.volume(entry)) : `${O.fmtNum(E.volume(entry))} ${info.unit}`) + ` in ${E.setsOf(entry)} set(s)` : '—'}</span><span class="ex-pts">${O.fmtNum(pts)} pts</span></div>
       ${!ed.isNew && ed.isExtra ? '<button class="btn-text danger-text" data-act="ed-remove">Remove from today</button>' : ''}
       ${!ed.isNew && !ed.isExtra ? '<button class="btn-text danger-text" data-act="ed-clear">Clear</button>' : ''}
       <div class="btns"><button class="btn-line" data-act="ed-cancel">Cancel</button><button class="btn-gold" data-act="ed-ok">OK</button></div>
@@ -190,14 +212,14 @@
     const st = O.todayStats();
     const items = O.todayRows().filter((r) => E.isActive(r.entry)).map((r) => {
       const e = r.entry, info = E.EX[e.exercise];
-      return `<div><span>${esc(info.name)} · ${E.lvl(e.level).roman} · ${O.n0(e.reps)}×${Math.max(1, O.n0(e.sets))} · ${O.n0(e.minutes)} min</span><b>${O.fmtNum(E.exercisePoints(e, S.scoring))}</b></div>`;
+      return `<div><span>${esc(info.name)} · ${E.lvl(e.level).roman} · ${esc(E.fmtSets(e))}</span><b>${O.fmtNum(E.exercisePoints(e, S.scoring))}</b></div>`;
     }).join('');
     const verdict = st.complete ? '<p class="ok">This will be a COMPLETED day ✓</p>'
       : `<p class="warn">This will be an INCOMPLETE day (${st.pct}% — ${S.scoring.completeAt}% needed to complete it). Your streak continues.</p>`;
     return `<div class="sheet-wrap" data-act="sheet-bg"><div class="sheet"><h3>Close the day?</h3>
       <p class="muted small">After closing, today's log is locked and can't be changed.</p>
       <div class="confirm-list">${items}</div>
-      <p class="strong">${O.fmtNum(st.points)} points${st.planned ? ` of ${O.fmtNum(st.planned)} planned · ${st.pct}%` : ''} · ${st.minutes} min</p>${verdict}
+      <p class="strong">${O.fmtNum(st.points)} points${st.planned ? ` of ${O.fmtNum(st.planned)} planned · ${st.pct}%` : ''}${st.minutes ? ` · ${st.minutes} min timed` : ''}</p>${verdict}
       <div class="btns"><button class="btn-line" data-act="sheet-close">Go back</button><button class="btn-gold" data-act="close-confirm">Yes, close it</button></div></div></div>`;
   }
 
@@ -283,7 +305,13 @@
     document.body.style.backgroundImage = bg ? `url('${bg}')` : '';
     if (O.todayClosed()) { V.edit = null; V.pick = false; V.confirmClose = false; }
     const sheet = V.edit ? editorSheet() : V.pick ? pickSheet() : V.confirmClose ? confirmSheet() : '';
+    // keep an open pop-up steady: no slide-in again and same scroll position after each tap
+    const old = app.querySelector('.sheet'), oldTop = old ? old.scrollTop : 0;
     app.innerHTML = topbar() + `<main>${views[V.tab]()}</main>` + (V.tab === 'avatar' ? '' : nav()) + sheet;
+    const now = app.querySelector('.sheet');
+    if (now && old) { now.classList.add('no-anim'); now.parentElement.classList.add('no-anim'); now.scrollTop = oldTop; }
+    document.body.classList.toggle('sheet-open', !!now);
+    mountHeroVideo();
   }
 
   /* ------------------------------- events ------------------------------- */
@@ -300,9 +328,9 @@
       case 'pick': V.pick = true; break;
       case 'pick-ex': V.pick = false; openEditor(d.ex); break;
       case 'ed-lv': V.edit.draft.level = +d.lv; break;
-      case 'ed-step': { const dr = V.edit.draft; dr[d.field] = O.clamp(O.n0(dr[d.field]) + +d.d, 0, 9999); break; }
+      case 'sl-step': case 'sl-del': case 'sl-add': V.edit.draft.perSet = O.setsEdit(V.edit.exId, V.edit.draft.perSet, d.act, d); break;
       case 'ed-ok': { const ed = V.edit; V.edit = null; O.updateEntry(ed.exId, (x) => ({ ...x, ...ed.draft })); return; }
-      case 'ed-clear': { const ex = V.edit.exId; V.edit = null; O.updateEntry(ex, (x) => ({ ...x, reps: 0, sets: 0, minutes: 0 })); return; }
+      case 'ed-clear': { const ex = V.edit.exId; V.edit = null; O.updateEntry(ex, (x) => ({ ...x, perSet: [] })); return; }
       case 'ed-remove': { const ex = V.edit.exId; V.edit = null; O.removeExtra(ex); return; }
       case 'ed-cancel': case 'sheet-close': V.edit = null; V.pick = false; V.confirmClose = false; break;
       case 'sheet-bg': if (e.target !== el) return; V.edit = null; V.pick = false; V.confirmClose = false; break;
