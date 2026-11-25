@@ -1,0 +1,32 @@
+# Hourly Telegram reminders and alerts for Path to Olympus (see tools/notify.mjs).
+# Does nothing until the TG_TOKEN and DAVID_CODE secrets are set.
+name: Telegram reminders
+
+on:
+  schedule:
+    - cron: "7 * * * *"
+  workflow_dispatch:
+    inputs:
+      chats:
+        description: "List the chat ids that wrote to the bot (setup)"
+        type: boolean
+        default: false
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Check and send
+        env:
+          TG_TOKEN: ${{ secrets.TG_TOKEN }}
+          TG_DAVID_CHAT: ${{ secrets.TG_DAVID_CHAT }}
+          TG_ADMIN_CHAT: ${{ secrets.TG_ADMIN_CHAT }}
+          DAVID_CODE: ${{ secrets.DAVID_CODE }}
+          TZ_NAME: ${{ vars.TZ_NAME }}
+          REMIND_HOURS: ${{ vars.REMIND_HOURS }}
+          WARN_HOUR: ${{ vars.WARN_HOUR }}
+        run: node tools/notify.mjs ${{ inputs.chats && '--chats' || '' }}
