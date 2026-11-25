@@ -76,7 +76,7 @@
   const startDate = () => profile().startDate || S.today;
   const todayPlan = () => planForDate(S.today);
   const todayLog = () => S.logs[S.today] || null;
-  const todayClosed = () => !!(todayLog() && todayLog().status === 'DONE');
+  const todayClosed = () => !!(todayLog() && (todayLog().status === 'DONE' || todayLog().status === 'EXCUSED'));
   function todayEntries() {
     const log = todayLog();
     if (log && log.status !== 'PENDING') return log.entries || [];
@@ -213,6 +213,13 @@
         db.days = {}; db.awards = {};
         db.profile = { ...newProfile(today), ...keep, resetAt: Date.now() }; save();
       },
+      async setDay(date, log) { if (log) db.days[date] = { ...log, date }; else delete db.days[date]; save(); },
+      // pairing is not needed in demo (one browser = one device)
+      async davidState() { return { ready: true, registered: true }; },
+      async registerDavid() {},
+      async setDavidCode() {},
+      async exportAll() { return JSON.parse(JSON.stringify(db)); },
+      async importAll(data) { db = Object.assign(blank(), JSON.parse(JSON.stringify(data))); save(); },
       wipe() { localStorage.removeItem(KEY); localStorage.removeItem('olympus_demo_offset'); db = blank(); save(); },
     };
   }
@@ -343,12 +350,75 @@
         }
         await root.set({ ...newProfile(today), ...keep, resetAt: Date.now() });
       },
+      /** Admin: write (or delete) one day exactly as given. */
+      async setDay(date, log) { if (log) await col('days').doc(date).set({ ...log, date }); else await col('days').doc(date).delete(); },
+      /* ---- David's phone pairing: davidCode/main is secret, davidState/main is public, davids/<uid> = paired phones ---- */
+      async davidState(uid) {
+        const [st, dv, ad] = await Promise.all([db.collection('davidState').doc('main').get(), db.collection('davids').doc(uid).get(), db.collection('admins').doc(uid).get()]);
+        return { ready: st.exists, registered: dv.exists || ad.exists };
+      },
+      async registerDavid(uid, hash) { await db.collection('davids').doc(uid).set({ codeHash: hash, at: Date.now() }); },
+      /** Admin: set a new code. Phones paired with the old code are signed out. */
+      async setDavidCode(hash) {
+        const old = await db.collection('davids').get();
+        const b = db.batch();
+        b.set(db.collection('davidCode').doc('main'), { codeHash: hash });
+        b.set(db.collection('davidState').doc('main'), { ready: true, at: Date.now() });
+        old.docs.forEach((d) => b.delete(d.ref));
+        await b.commit();
+      },
+      /** Everything about the journey, as plain data (Admin backup). */
+      async exportAll() {
+        const coll = async (n) => Object.fromEntries((await col(n).get()).docs.map((d) => [d.id, d.data()]));
+        const prof = await root.get();
+        return { profile: prof.exists ? prof.data() : null, days: await coll('days'), awards: await coll('awards'), plans: await coll('plans'),
+          overrides: await coll('overrides'), targets: await coll('targets'), config: await coll('config') };
+      },
+      /** Replace the journey with a backup (Admin restore). */
+      async importAll(data) {
+        const names = ['days', 'awards', 'plans', 'overrides', 'targets'];
+        const dels = (await Promise.all(names.map((n) => col(n).get()))).flatMap((q) => q.docs.map((d) => d.ref));
+        const sets = [];
+        names.forEach((n) => Object.entries(data[n] || {}).forEach(([id, v]) => sets.push([col(n).doc(id), v])));
+        Object.entries(data.config || {}).forEach(([id, v]) => sets.push([col('config').doc(id), v]));
+        const ops = dels.map((r) => ['del', r]).concat(sets.map(([r, v]) => ['set', r, v]));
+        for (let i = 0; i < ops.length; i += 400) {
+          const b = db.batch();
+          ops.slice(i, i + 400).forEach(([k, r, v]) => (k === 'del' ? b.delete(r) : b.set(r, v)));
+          await b.commit();
+        }
+        if (data.profile) await root.set({ ...data.profile, resetAt: Date.now() });
+      },
     };
   }
 
   function newProfile(today) {
     return { name: 'David', avatarPhoto: null, score: 0, currentStreak: 0, bestStreak: 0, daysDone: 0, daysLost: 0, startDate: today, lastEvaluated: null };
   }
+
+  /* ============================ VERSION & UPDATES ============================ */
+
+  const APP_VERSION = '5.0';
+  /** Register the service worker; when a newer version takes over, offer a one-tap update. */
+  function watchUpdates() {
+    if (!('serviceWorker' in navigator) || !location.protocol.startsWith('http')) return;
+    const hadController = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.register('sw.js').then((reg) => {
+      const check = () => reg.update().catch(() => {});
+      setInterval(check, 20 * 60 * 1000);
+      document.addEventListener('visibilitychange', () => { if (!document.hidden) check(); });
+    }).catch(() => {});
+    navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadController) showUpdateBar(); });
+  }
+  function showUpdateBar() {
+    if (document.getElementById('update-bar')) return;
+    const b = document.createElement('button');
+    b.id = 'update-bar';
+    b.innerHTML = '✨ A new version is ready — <b>tap to update</b>';
+    b.onclick = () => location.reload();
+    document.body.appendChild(b);
+  }
+  const versionHTML = () => `<p class="version-line">Path to Olympus · v${APP_VERSION}</p>`;
 
   /* ================================ START ================================ */
 
@@ -380,7 +450,7 @@
       S.got = { profile: false, plans: false, logs: false };
       if (!user) { backend.signInAnon().catch((e) => { S.error = 'Sign-in failed: ' + e.message; emit(); }); emit(); return; }
       if (role === 'admin') await refreshAdmin();
-      else subscribe(role);
+      else await refreshDavid();
       emit();
     });
 
@@ -398,6 +468,19 @@
     if (!S.isAdmin && unlisten) { unlisten(); unlisten = null; }
     emit();
   }
+
+  /** David: this phone must be paired with the code from the Council before it can see or write the journey. */
+  async function refreshDavid() {
+    try { S.pair = await backend.davidState(S.user.uid); }
+    catch (e) { S.pair = { ready: true, registered: false, error: e.message }; }
+    if (S.pair.registered) subscribe('david');
+    emit();
+  }
+  async function pairDevice(code) {
+    await backend.registerDavid(S.user.uid, await sha('olympus-david:' + code));
+    await refreshDavid();
+  }
+  const davidCodeHash = (code) => sha('olympus-david:' + code);
 
   function subscribe(role) {
     if (unlisten) return;
@@ -445,7 +528,7 @@
 
   function updateEntry(exId, fn) {
     const log = todayLog();
-    if (log && (log.status === 'DONE' || log.status === 'LOST')) return;
+    if (log && (log.status === 'DONE' || log.status === 'LOST' || log.status === 'EXCUSED')) return;
     const plan = todayPlan();
     const planned = plan && (plan.exercises || []).find((p) => p.exercise === exId);
     const cur = todayEntries().find((e) => e.exercise === exId) || { exercise: exId, level: planned ? planned.level : 1, perSet: [] };
@@ -463,6 +546,32 @@
     S.draft = { date: S.today, entries };
     backend.saveDraft(S.today, entries);
     emit();
+  }
+
+  /** Admin: write one day (or remove it), then rebuild score, streaks and counters from all days. */
+  async function adminSaveDay(date, log) {
+    await backend.setDay(date, log);
+    const logs = { ...S.logs };
+    if (log) logs[date] = { ...log, date }; else delete logs[date];
+    const p = E.recomputeProfile(startDate(), S.today, logs, planForDate);
+    await backend.updateProfile(p);
+    return p;
+  }
+  /** Admin: a closed-day record built from the given entries (same formula as David's close). */
+  function adminDoneLog(date, entries) {
+    const r = E.closeDay(date, startDate(), planForDate(date), entries, S.logs, planForDate, S.scoring);
+    return r ? { ...r.log, editedByAdmin: Date.now() } : null;
+  }
+  /** Download data as a .json file. */
+  function downloadJSON(obj, name) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(obj, null, 1)], { type: 'application/json' }));
+    a.download = name; document.body.appendChild(a); a.click();
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+  }
+  async function backupNow(tag = 'backup') {
+    const data = await backend.exportAll();
+    downloadJSON({ app: 'path-to-olympus', version: APP_VERSION, exportedAt: new Date().toISOString(), ...data }, `olympus-${tag}-${S.today}.json`);
   }
 
   /** Add an exercise that isn't in today's plan. */
@@ -490,6 +599,7 @@
     const medals = E.newlyEarned({ streak: r.newStreak, bestStreak: best, doneLogs }, earned).map((m) => E.medalAward(m, now));
     const coats = E.newlyAchieved(start, S.today, E.HORIZONS.map((h) => target(h.id)), Object.values(logsAfter), earned)
       .map((x) => E.milestoneAward(x.h, x.idx, now));
+    const recs = E.newRecords(E.records(Object.values(S.logs).filter((l) => l.date !== S.today)), r.log.entries);
     backend.closeDay(r, best, medals.concat(coats));
     queued.add('closed_' + S.today);
     const line = `+${r.points} points · ${r.pct}% of the plan · Streak ${r.newStreak} ${r.newStreak === 1 ? 'day' : 'days'}`;
@@ -497,6 +607,7 @@
     if (r.complete) enqueue({ type: 'video', id: 'closed_' + S.today, key: 'day_passed', title: 'Day Passed!', subtitle: line });
     else enqueue({ type: 'video', id: 'closed_' + S.today, key: 'day_incomplete', fallback: 'day_passed', title: 'Day Closed', subtitle: line });
     enqueue({ type: 'summary', id: 'ring_' + S.today, title: r.complete ? 'Day Passed!' : 'Day Closed', subtitle: line, pct: r.pct });
+    if (recs.length) enqueue({ type: 'record', id: 'rec_' + S.today, recs });
   }
 
   /** Read a photo from the phone, crop it square and shrink it (≈20–40 KB) so it fits in the database. */
@@ -807,16 +918,21 @@
    * Editor for the sets of one exercise: a row per set with − / + and ✕, then "+ Add a set".
    * Buttons carry data-act="sl-step|sl-del|sl-add" plus `attrs` (so a page can tell exercises apart).
    */
-  function setsEditorHTML(exId, list, attrs = '') {
+  function setsEditorHTML(exId, list, attrs = '', opts = {}) {
     const info = E.EX[exId], timed = E.isTimed(exId), step = info.step || 1;
+    const withTimer = !!(opts.timer && timed);
     const f = (v) => (timed ? E.fmtSecs(v) : v);
-    const rows = list.map((v, i) => `<div class="set-row"><span class="set-no">SET ${i + 1}</span>
-      <button class="sb" data-act="sl-step" ${attrs} data-i="${i}" data-d="${-step}" ${v <= 0 ? 'disabled' : ''} aria-label="Less">−</button>
-      <b class="set-v">${f(v)}${timed ? '' : `<small>${info.unit}</small>`}</b>
-      <button class="sb" data-act="sl-step" ${attrs} data-i="${i}" data-d="${step}" aria-label="More">+</button>
-      <button class="sx" data-act="sl-del" ${attrs} data-i="${i}" aria-label="Remove set ${i + 1}">✕</button></div>`).join('');
+    const rows = list.map((v, i) => {
+      const run = withTimer && opts.running === i;
+      return `<div class="set-row${withTimer ? ' timed' : ''}${run ? ' running' : ''}"><span class="set-no">SET ${i + 1}</span>
+      <button class="sb" data-act="sl-step" ${attrs} data-i="${i}" data-d="${-step}" ${v <= 0 || run ? 'disabled' : ''} aria-label="Less">−</button>
+      <b class="set-v"${run ? ' id="timer-live"' : ''}>${run ? '0 s' : f(v)}${timed ? '' : `<small>${info.unit}</small>`}</b>
+      <button class="sb" data-act="sl-step" ${attrs} data-i="${i}" data-d="${step}" ${run ? 'disabled' : ''} aria-label="More">+</button>
+      ${withTimer ? `<button class="st${run ? ' on' : ''}" data-act="sl-timer" ${attrs} data-i="${i}" aria-label="${run ? 'Stop' : 'Time this set'}">${run ? '■' : '▶'}</button>` : ''}
+      <button class="sx" data-act="sl-del" ${attrs} data-i="${i}" aria-label="Remove set ${i + 1}">✕</button></div>`;
+    }).join('');
     return `<div class="sets-ed">${rows || '<p class="muted small center">No sets yet.</p>'}
-      ${list.length < 20 ? `<button class="btn-line add-set" data-act="sl-add" ${attrs}>＋ Add a set</button>` : ''}</div>`;
+      ${list.length < 20 ? `<div class="row add-row"><button class="btn-line add-set grow" data-act="sl-add" ${attrs}>＋ Add a set</button>${withTimer ? `<button class="btn-gold add-timed" data-act="sl-timed-new" ${attrs}>▶ Start a timed set</button>` : ''}</div>` : ''}</div>`;
   }
   /** Shared handler: returns the changed list for sl-step / sl-del / sl-add. */
   function setsEdit(exId, list, act, d) {
@@ -869,17 +985,48 @@
     return out + '</div>';
   }
 
+  /** Home: just this month's target and the next medal — the full list lives in the Chronicle. */
+  function homeGoalsCard() {
+    const t = target('MONTH'), { idx, tot } = currentBlock('MONTH');
+    const [, to] = E.blockRange(startDate(), E.HZ.MONTH, idx);
+    const left = Math.max(0, E.diffDays(S.today, to) + 1);
+    const value = n0(t.points) ? `${fmtNum(tot.points)} / ${fmtNum(t.points)} pts` : `${fmtNum(tot.minutes)} / ${fmtNum(t.minutes)} min`;
+    let out = `<div class="card">${section('This month')}${labeled(`Month ${E.roman(idx + 1)}${t.state === 'GHOST' ? ' · ghost' : ''} · ${left} day${left === 1 ? '' : 's'} left`, value, E.progress(t, tot), t.state === 'GHOST')}`;
+    const p = profile();
+    const nm = E.nextMedal({ streak: n0(p.currentStreak), bestStreak: n0(p.bestStreak), doneLogs: Object.values(S.logs).filter((l) => l.status === 'DONE') }, earnedIds());
+    if (nm) {
+      const u = nm.unit + (nm.left === 1 ? '' : 's');
+      out += `<div class="next-medal" data-act="tab" data-tab="hall"><span class="nm-art">${awardArt('MEDAL', nm.medal.id, false, 56, E.MEDALS.indexOf(nm.medal))}</span>
+        <div class="grow"><div class="eyebrow-dark">NEXT MEDAL</div><b>${esc(nm.medal.title)}</b><div class="muted small">${nm.left} ${u} to go</div>${bar(nm.have / nm.need)}</div></div>`;
+    }
+    return out + '</div>';
+  }
+
+  /** Chronicle: best set and best day for each exercise. */
+  function recordsCard() {
+    const r = E.records(Object.values(S.logs));
+    const ids = E.EXERCISES.map((e) => e.id).filter((id) => r[id]);
+    if (!ids.length) return '';
+    const rows = ids.map((id) => {
+      const x = r[id], info = E.EX[id], t = E.isTimed(id);
+      const f = (v) => (t ? E.fmtSecs(v) : `${v} ${info.unit}`);
+      return `<div class="rec-row"><b>${esc(info.name)}</b><span>Best set <b>${f(x.bestSet)}</b><small>${fmtDate(x.bestSetDate, 'dm')}</small></span><span>Best day <b>${f(x.bestDay)}</b><small>${fmtDate(x.bestDayDate, 'dm')}</small></span></div>`;
+    }).join('');
+    return `<div class="card">${section('Personal records')}${rows}</div>`;
+  }
+
   /** done (completed) · incomplete · skipped · today · planned · empty · before */
   function markFor(d) {
     const log = S.logs[d];
     if (log && log.status === 'DONE') return log.complete === false ? 'incomplete' : 'done';
     if (log && log.status === 'LOST') return 'skipped';
+    if (log && log.status === 'EXCUSED') return 'excused';
     if (d === S.today) return 'today';
     if (d < startDate()) return 'before';
     if (d > S.today && !E.isRest(planForDate(d))) return 'planned';
     return 'empty';
   }
-  const CIRCLE_SLOT = { done: 'circle_done', incomplete: 'circle_incomplete', skipped: 'circle_skipped', today: 'circle_today', planned: 'circle_planned' };
+  const CIRCLE_SLOT = { done: 'circle_done', incomplete: 'circle_incomplete', skipped: 'circle_skipped', today: 'circle_today', planned: 'circle_planned', excused: 'circle_excused' };
 
   function dayCircle(iso, label) {
     const mark = markFor(iso);
@@ -908,7 +1055,7 @@
       <div class="cal-head"><button class="icon" data-act="month" data-dir="-1" aria-label="Previous month">‹</button><h3>${MONTHS_LONG[m - 1]} ${y}</h3><button class="icon" data-act="month" data-dir="1" aria-label="Next month">›</button></div>
       <div class="cal-grid wk">${['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((x) => `<span>${x}</span>`).join('')}</div>
       <div class="cal-grid">${cells}</div>
-      <div class="legend">${leg('done', 'Completed')}${leg('incomplete', 'Incomplete')}${leg('skipped', 'Skipped')}${leg('today', 'Today')}${leg('planned', 'Planned')}</div>
+      <div class="legend">${leg('done', 'Completed')}${leg('incomplete', 'Incomplete')}${leg('skipped', 'Skipped')}${Object.values(S.logs).some((l) => l.status === 'EXCUSED' && l.date.startsWith(month)) ? leg('excused', 'Excused') : ''}${leg('today', 'Today')}${leg('planned', 'Planned')}</div>
     </div>`;
   }
 
@@ -918,6 +1065,7 @@
     let status, cls;
     if (log && log.status === 'DONE') { status = `${log.complete === false ? 'INCOMPLETE' : 'COMPLETED'} · ${n0(log.pct)}% · +${fmtNum(log.points)} pts`; cls = log.complete === false ? 'warn' : 'ok'; }
     else if (log && log.status === 'LOST') { status = `SKIPPED · ${n0(log.points)} pts`; cls = 'bad'; }
+    else if (log && log.status === 'EXCUSED') { status = `EXCUSED BY THE COUNCIL${log.reason ? ' · ' + esc(log.reason) : ''}`; cls = 'muted'; }
     else if (date === S.today) { status = 'IN PROGRESS'; cls = ''; }
     else { status = date > S.today ? 'UPCOMING' : E.isRest(plan) ? 'NO PLAN' : 'NOT CLOSED'; cls = 'muted'; }
 
@@ -952,17 +1100,21 @@
   function trendsCard(metric) {
     const days = [];
     for (let i = 29; i >= 0; i--) days.push(E.addDays(S.today, -i));
-    const pick = { POINTS: (l) => n0(l.points), MINUTES: E.logMinutes, REPS: E.logReps, SETS: E.logSets, LEVEL: E.logAvgLevel }[metric] || ((l) => n0(l.points));
+    const exId = String(metric).startsWith('EX:') ? metric.slice(3) : null;
+    const pick = exId ? (l) => E.sum((l.entries || []).filter((e) => e.exercise === exId && E.isActive(e)), E.volume)
+      : { POINTS: (l) => n0(l.points), MINUTES: E.logMinutes, REPS: E.logReps, SETS: E.logSets, LEVEL: E.logAvgLevel }[metric] || ((l) => n0(l.points));
     const values = days.map((d) => {
       const l = S.logs[d];
       if (!l || l.status === 'PENDING') return null;
       if (l.status === 'LOST') return 0;
       return pick(l);
     });
-    const series = [{ label: (METRICS.find((m) => m[0] === metric) || METRICS[0])[1], values, color: C.bronze }];
+    const series = [{ label: exId ? `${E.EX[exId].name} (${E.isTimed(exId) ? 'seconds' : E.EX[exId].unit})` : (METRICS.find((m) => m[0] === metric) || METRICS[0])[1], values, color: C.bronze }];
     if (metric === 'POINTS') series.push({ label: 'Planned', values: days.map((d) => { const l = S.logs[d]; return l && l.status !== 'PENDING' ? n0(l.planned) : null; }), color: C.gold, dashed: true });
     const chips = METRICS.map(([k, l]) => `<button class="chip ${k === metric ? 'on' : ''}" data-act="metric" data-metric="${k}">${l}</button>`).join('');
-    return `<div class="card">${section('Trends · last 30 days')}<div class="chips">${chips}</div>${lineChartSVG(series, days.map((d) => fmtDate(d, 'dm')))}</div>`;
+    const used = new Set(Object.values(S.logs).flatMap((l) => (l.status === 'DONE' ? (l.entries || []).filter(E.isActive).map((e) => e.exercise) : [])));
+    const exChips = E.EXERCISES.filter((e) => used.has(e.id)).map((e) => `<button class="chip ex ${metric === 'EX:' + e.id ? 'on' : ''}" data-act="metric" data-metric="EX:${e.id}">${esc(e.name)}</button>`).join('');
+    return `<div class="card">${section('Trends · last 30 days')}<div class="chips">${chips}</div>${exChips ? `<div class="chips">${exChips}</div>` : ''}${lineChartSVG(series, days.map((d) => fmtDate(d, 'dm')))}</div>`;
   }
 
   /** Cumulative points vs the ghost pace and the 10-year master trajectory. */
@@ -1051,6 +1203,19 @@
       return;
     }
 
+    if (c.type === 'record') {
+      const lines = c.recs.map((x) => {
+        const info = E.EX[x.exercise], t = E.isTimed(x.exercise);
+        const f = (v) => (t ? E.fmtSecs(v) : `${v} ${info.unit}`);
+        return `<li><b>${esc(info.name)}</b> — ${x.kind === 'set' ? 'best set' : 'best day'}: <b>${f(x.value)}</b> <span class="was">(was ${f(x.was)})</span></li>`;
+      }).join('');
+      el.className = 'cel medal-reveal';
+      el.innerHTML = `<div class="mr"><div class="eyebrow">NEW PERSONAL RECORD</div><div class="pop record-pop">${laurelSVG(150, C.gold)}<b>PR</b></div>
+        <h2>Stronger than yesterday</h2><ul class="rec-list">${lines}</ul><button class="btn-gold" data-x="done">Continue</button></div>`;
+      el.querySelector('[data-x="done"]').onclick = done;
+      document.body.appendChild(el);
+      return;
+    }
     if (c.type === 'medal' && !c.artReady) {
       // make sure the uploaded medal picture is known before showing it
       whenMedia('medal_' + c.award.id).then(() => { queue.unshift({ ...c, artReady: true }); showNext(); });
@@ -1151,6 +1316,7 @@
     E, C, S, start, onChange, emit, loaded, esc, fmtDate, fmtMillis, fmtNum, n0, clamp,
     profile, planForDate, startDate, todayPlan, todayLog, todayClosed, todayEntries, todayRows, todayStats, baseline, planTarget, ghost, target, currentBlock, week, earnedIds,
     updateEntry, addExtra, removeExtra, closeToday, photoToDataURL, saveAvatarPhoto, adminOp, PIN, ADMIN, toast,
+    APP_VERSION, watchUpdates, versionHTML, homeGoalsCard, recordsCard, adminSaveDay, adminDoneLog, backupNow, downloadJSON, pairDevice, davidCodeHash, refreshDavid,
     backend: () => backend,
     laurelSVG, avatarHTML, medalSVG, coatSVG, emblemSVG, lineChartSVG, rawUrl, mediaURL, awardArt, targetLine,
     bar, labeled, section, videoURL, videoFile, levelBadge, setsEditorHTML, setsEdit, horizonsCard, calendarCard, dayDetailHTML, totalsCard, trendsCard, trajectoryCard, exerciseMediaHTML, exerciseMediaURL, guideText,
