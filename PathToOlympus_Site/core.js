@@ -209,6 +209,10 @@
       async saveScoring(sc) { db.scoring = sc; save(); },
       async saveGuide(texts) { db.guide = { texts: { ...((db.guide || {}).texts || {}), ...texts } }; save(); },
       async updateProfile(fields) { db.profile = { ...(db.profile || newProfile(S.today)), ...fields }; save(); },
+      async resetJourney(today, keep) {
+        db.days = {}; db.awards = {};
+        db.profile = { ...newProfile(today), ...keep, resetAt: Date.now() }; save();
+      },
       wipe() { localStorage.removeItem(KEY); localStorage.removeItem('olympus_demo_offset'); db = blank(); save(); },
     };
   }
@@ -331,6 +335,14 @@
       async saveScoring(sc) { await col('config').doc('scoring').set(sc); },
       async saveGuide(texts) { await col('config').doc('guide').set({ texts }, { merge: true }); },
       async updateProfile(fields) { await root.set(fields, { merge: true }); },
+      /** Start again: delete every day and award, zero the profile (plans, targets, media stay). */
+      async resetJourney(today, keep) {
+        const docs = [...(await col('days').get()).docs, ...(await col('awards').get()).docs];
+        for (let i = 0; i < docs.length; i += 400) {
+          const b = db.batch(); docs.slice(i, i + 400).forEach((d) => b.delete(d.ref)); await b.commit();
+        }
+        await root.set({ ...newProfile(today), ...keep, resetAt: Date.now() });
+      },
     };
   }
 
@@ -390,7 +402,10 @@
   function subscribe(role) {
     if (unlisten) return;
         unlisten = backend.listen({
-          profile: (p) => { S.profile = p; S.got.profile = true; emit(); },
+          profile: (p) => {
+            if (S.profile && p && p.resetAt && p.resetAt !== S.profile.resetAt) { queued.clear(); S.draft = null; lastEvalDay = null; }
+            S.profile = p; S.got.profile = true; emit();
+          },
           plans: (v) => { S.plans = v; S.got.plans = true; emit(); },
           overrides: (v) => { S.overrides = v; emit(); },
           days: (v) => { S.logs = v; S.got.logs = true; emit(); },
