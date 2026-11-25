@@ -383,10 +383,14 @@
     if (log && (log.status === 'DONE' || log.status === 'LOST')) return;
     const plan = todayPlan();
     const planned = plan && (plan.exercises || []).find((p) => p.exercise === exId);
-    const cur = todayEntries().find((e) => e.exercise === exId) || { exercise: exId, level: planned ? planned.level : 1, reps: 0, sets: 0, minutes: 0 };
+    const cur = todayEntries().find((e) => e.exercise === exId) || { exercise: exId, level: planned ? planned.level : 1, perSet: [] };
     const u = fn({ ...cur });
     u.level = clamp(n0(u.level) || 1, 1, 3);
-    u.reps = clamp(n0(u.reps), 0, 9999); u.sets = clamp(n0(u.sets), 0, 99); u.minutes = clamp(n0(u.minutes), 0, 600);
+    // one number per set (reps, or seconds when timed); sets / minutes kept alongside for reading
+    u.perSet = E.setList(u).slice(0, 30).map((v) => clamp(Math.round(v), 0, 9999));
+    delete u.reps;
+    u.sets = u.perSet.length;
+    u.minutes = Math.round(E.minutesOf(u) * 10) / 10;
     const order = todayRows().map((r) => (r.planned ? r.planned.exercise : r.entry.exercise));
     if (!order.includes(exId)) order.push(exId);
     const entries = todayEntries().filter((e) => e.exercise !== exId).concat([u])
@@ -702,6 +706,29 @@
   const bar = (p, ghost = false, cls = '') => `<div class="bar ${ghost ? 'ghost' : ''} ${cls}"><i style="width:${f(clamp(p, 0, 1) * 100)}%"></i></div>`;
   const labeled = (label, value, p, ghost = false) => `<div class="lp"><div class="lp-row"><span>${esc(label)}</span><b>${esc(value)}</b></div>${bar(p, ghost)}</div>`;
   const section = (t) => `<div class="section"><i></i><span>${esc(t)}</span><s></s></div>`;
+  /**
+   * Editor for the sets of one exercise: a row per set with − / + and ✕, then "+ Add a set".
+   * Buttons carry data-act="sl-step|sl-del|sl-add" plus `attrs` (so a page can tell exercises apart).
+   */
+  function setsEditorHTML(exId, list, attrs = '') {
+    const info = E.EX[exId], timed = E.isTimed(exId), step = info.step || 1;
+    const f = (v) => (timed ? E.fmtSecs(v) : v);
+    const rows = list.map((v, i) => `<div class="set-row"><span class="set-no">SET ${i + 1}</span>
+      <button class="sb" data-act="sl-step" ${attrs} data-i="${i}" data-d="${-step}" ${v <= 0 ? 'disabled' : ''} aria-label="Less">−</button>
+      <b class="set-v">${f(v)}${timed ? '' : `<small>${info.unit}</small>`}</b>
+      <button class="sb" data-act="sl-step" ${attrs} data-i="${i}" data-d="${step}" aria-label="More">+</button>
+      <button class="sx" data-act="sl-del" ${attrs} data-i="${i}" aria-label="Remove set ${i + 1}">✕</button></div>`).join('');
+    return `<div class="sets-ed">${rows || '<p class="muted small center">No sets yet.</p>'}
+      ${list.length < 20 ? `<button class="btn-line add-set" data-act="sl-add" ${attrs}>＋ Add a set</button>` : ''}</div>`;
+  }
+  /** Shared handler: returns the changed list for sl-step / sl-del / sl-add. */
+  function setsEdit(exId, list, act, d) {
+    const l = list.slice(), info = E.EX[exId];
+    if (act === 'sl-step') l[+d.i] = clamp(n0(l[+d.i]) + +d.d, 0, 9999);
+    if (act === 'sl-del') l.splice(+d.i, 1);
+    if (act === 'sl-add') l.push(l.length ? l[l.length - 1] || info.dflt : info.dflt);
+    return l;
+  }
   const levelBadge = (n) => `<span class="lvl">${E.lvl(n).label}</span>`;
 
   const fmtNum = (v) => Math.round(n0(v)).toLocaleString();
@@ -797,11 +824,11 @@
       const p = plan && (plan.exercises || []).find((x) => x.exercise === id);
       const e = entries.find((x) => x.exercise === id && E.isActive(x));
       body += `<div class="dd-row"><div class="dd-top"><b>${esc(info.name)}</b><span class="${e ? 'ok' : 'muted'}">${e ? `${fmtNum(E.exercisePoints(e, S.scoring))} pts` : '—'}</span></div>
-        ${p ? `<div class="muted small">Plan: ${E.lvl(p.level).label} · ${n0(p.targetReps)} ${info.unit} × ${n0(p.targetSets)} sets · ${n0(p.targetMinutes)} min</div>` : '<div class="muted small">Extra — not in the plan</div>'}
-        ${e ? `<div>Done: ${E.lvl(e.level).label} · ${n0(e.reps)} ${info.unit} × ${n0(e.sets)} sets · ${n0(e.minutes)} min</div>` : ''}</div>`;
+        ${p ? `<div class="muted small">Plan: ${E.lvl(p.level).label} · ${E.fmtSets(E.planEntry(p))}</div>` : '<div class="muted small">Extra — not in the plan</div>'}
+        ${e ? `<div>Done: ${E.lvl(e.level).label} · ${E.fmtSets(e)}</div>` : ''}</div>`;
     });
-    const mins = entries.filter(E.isActive).reduce((a, e) => a + n0(e.minutes), 0);
-    if (ids.length) body += `<p class="strong">Time: ${mins} / ${E.plannedMinutes(plan)} min · Points: ${fmtNum(log && log.status === 'DONE' ? log.points : E.dayPoints(entries, S.scoring))} / ${fmtNum(log && log.planned != null ? log.planned : E.plannedPoints(plan, S.scoring))}</p>`;
+    const mins = Math.round(entries.filter(E.isActive).reduce((a, e) => a + E.minutesOf(e), 0) * 10) / 10, pMins = E.plannedMinutes(plan);
+    if (ids.length) body += `<p class="strong">${mins || pMins ? `Timed: ${mins} / ${pMins} min · ` : ''}Points: ${fmtNum(log && log.status === 'DONE' ? log.points : E.dayPoints(entries, S.scoring))} / ${fmtNum(log && log.planned != null ? log.planned : E.plannedPoints(plan, S.scoring))}</p>`;
     if (plan && plan.note) body += `<p class="muted small">Note: ${esc(plan.note)}</p>`;
     return `<h3>${fmtDate(date, 'long')}</h3><div class="status ${cls}">${status}</div>${body}`;
   }
@@ -1014,7 +1041,7 @@
     updateEntry, addExtra, removeExtra, closeToday, photoToDataURL, saveAvatarPhoto, adminOp, PIN, toast,
     backend: () => backend,
     laurelSVG, avatarHTML, medalSVG, coatSVG, emblemSVG, lineChartSVG, rawUrl, mediaURL, awardArt, targetLine,
-    bar, labeled, section, levelBadge, horizonsCard, calendarCard, dayDetailHTML, totalsCard, trendsCard, trajectoryCard, exerciseMediaHTML, exerciseMediaURL, guideText,
+    bar, labeled, section, videoURL, levelBadge, setsEditorHTML, setsEdit, horizonsCard, calendarCard, dayDetailHTML, totalsCard, trendsCard, trajectoryCard, exerciseMediaHTML, exerciseMediaURL, guideText,
     modal, closeModal, demoBarHTML, demoAction,
     MOTTO: 'The road is mastered by the one who walks it.',
   };
