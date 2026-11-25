@@ -108,6 +108,33 @@ const tests = {
     assert.strictEqual(E.newlyAchieved(start, d(29), [{ ...month, state: 'GHOST' }], arr, new Set()).length, 0);
     assert.ok(Math.abs(E.progress({ points: 14880 }, E.totals(arr)) - 0.5) < 1e-9);
   },
+  excusedAndRecompute() {
+    // days 0,1 closed; day 2 excused; day 3 closed → streak 3, no penalty
+    const logs = { [d(0)]: closed(0), [d(1)]: closed(1), [d(2)]: { date: d(2), status: 'EXCUSED', points: 0 } };
+    logs[d(3)] = closed(3, undefined);
+    assert.strictEqual(E.streakEndingAt(d(3), start, logs, pf), 3);
+    assert.strictEqual(E.evaluate(start, null, d(4), logs, pf, SC).lostDates.length, 0);
+    const p = E.recomputeProfile(start, d(4), logs, pf);
+    assert.strictEqual(p.daysDone, 3); assert.strictEqual(p.daysLost, 0); assert.strictEqual(p.currentStreak, 3);
+    assert.strictEqual(p.score, 3 * 248);
+    // a skipped day breaks the streak and costs the penalty; best streak is remembered
+    const withLost = { ...logs, [d(4)]: { date: d(4), status: 'LOST', points: -50 } };
+    withLost[d(5)] = closed(5);
+    const q = E.recomputeProfile(start, d(6), withLost, pf);
+    assert.strictEqual(q.currentStreak, 1); assert.strictEqual(q.bestStreak, 3); assert.strictEqual(q.daysLost, 1);
+    assert.strictEqual(q.score, 4 * 248 - 50);
+    // an unclosed planned day in the past breaks the streak too
+    assert.strictEqual(E.recomputeProfile(start, d(9), withLost, pf).currentStreak, 0);
+  },
+  recordsAndNextMedal() {
+    const logs = [closed(0, [{ exercise: 'PULL_UPS', level: 1, perSet: [10, 8] }]), closed(1, [{ exercise: 'PULL_UPS', level: 1, perSet: [9, 9, 9] }])];
+    const r = E.records(logs);
+    assert.strictEqual(r.PULL_UPS.bestSet, 10); assert.strictEqual(r.PULL_UPS.bestDay, 27); assert.strictEqual(r.PULL_UPS.bestDayDate, d(1));
+    assert.deepStrictEqual(E.newRecords(r, [{ exercise: 'PULL_UPS', level: 1, perSet: [12] }]).map((x) => [x.kind, x.value, x.was]), [['set', 12, 10]]);
+    assert.strictEqual(E.newRecords(r, [{ exercise: 'PLANK', level: 1, perSet: [60] }]).length, 0); // first time ever: not a record
+    const n = E.nextMedal({ streak: 4, bestStreak: 4, doneLogs: [1, 2, 3, 4].map((i) => closed(i)) }, new Set(['first_step']));
+    assert.strictEqual(n.medal.id, 'first_week'); assert.strictEqual(n.left, 3);
+  },
   medals() {
     const logs = [0, 1, 2, 3, 4, 5, 6].map((i) => closed(i));
     logs[0].entries.push({ exercise: 'DIPS', level: 3, perSet: [5] });
