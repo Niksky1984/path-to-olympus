@@ -145,6 +145,53 @@ const tests = {
     assert.ok(!ids.includes('twelve_labours'));
     assert.strictEqual(E.roman(12), 'XII');
   },
+  ranks() {
+    assert.strictEqual(E.rankOf(0).rank.id, 'mortal');
+    assert.strictEqual(E.rankOf(-80).idx, 0);
+    const r = E.rankOf(6000);
+    assert.strictEqual(r.rank.id, 'recruit'); assert.strictEqual(r.next.id, 'warrior'); assert.strictEqual(r.frac, 0.5);
+    assert.strictEqual(E.rankOf(10000).rank.id, 'warrior');
+    const top = E.rankOf(999999); assert.strictEqual(top.rank.id, 'olympian'); assert.strictEqual(top.next, null); assert.strictEqual(top.frac, 1);
+  },
+  quests() {
+    const logs = [0, 1, 2].map((i) => closed(i, [{ exercise: 'PULL_UPS', level: 1, perSet: [10, 10] }, { exercise: 'PLANK', level: 1, perSet: [60] }]));
+    logs.push({ date: d(3), status: 'LOST', points: -50 });
+    const q = { kind: 'reps', exercise: 'PULL_UPS', goal: 50, from: d(0), to: d(6) };
+    assert.deepStrictEqual(E.questProgress(q, logs), { have: 60, goal: 50, frac: 1, done: true });
+    assert.strictEqual(E.questProgress({ ...q, from: d(1) }, logs).have, 40);              // only days inside the dates
+    assert.strictEqual(E.questProgress({ kind: 'days', goal: 5, from: d(0), to: d(6) }, logs).have, 3);
+    assert.strictEqual(E.questProgress({ kind: 'reps', exercise: 'PLANK', goal: 600, from: d(0), to: d(6) }, logs).have, 180);
+    assert.strictEqual(E.questState({ ...q, goal: 500 }, d(2), logs), 'active');
+    assert.strictEqual(E.questState({ ...q, goal: 500 }, d(9), logs), 'missed');
+    assert.strictEqual(E.questState({ ...q, from: d(5) }, d(2), logs), 'upcoming');
+    assert.strictEqual(E.questState(q, d(2), logs), 'done');
+    assert.strictEqual(E.questGoalText({ kind: 'reps', exercise: 'PUSH_UPS', goal: 150 }), '150 push-ups');
+    assert.strictEqual(E.questGoalText({ kind: 'reps', exercise: 'PLANK', goal: 600 }), '10:00 of plank');
+    assert.strictEqual(E.testId('2026-11-26'), '2026-11');
+  },
+  progression() {
+    // 3 days in a row at or above plan → +1 rep per set for pull-ups; abs (20·20 at level II, below 15? no: 20 ≥ 15) → level III
+    const logs = {};
+    [0, 1, 2].forEach((i) => { logs[d(i)] = closed(i); });
+    const sg = E.progressionSuggestions(d(3), logs, pf);
+    const pu = sg.find((x) => x.exercise === 'PULL_UPS');
+    assert.deepStrictEqual(pu.to, [11, 9, 7]); assert.strictEqual(pu.newLevel, 1);
+    const abs = sg.find((x) => x.exercise === 'ABS');
+    assert.strictEqual(abs.newLevel, 3); assert.deepStrictEqual(abs.to, [12, 12]);
+    const pl = sg.find((x) => x.exercise === 'PLANK');
+    assert.deepStrictEqual(pl.to, [70]);
+    // one miss in the last three → no suggestion
+    logs[d(1)] = closed(1, [{ exercise: 'PULL_UPS', level: 1, perSet: [5] }]);
+    assert.ok(!E.progressionSuggestions(d(3), logs, pf).some((x) => x.exercise === 'PULL_UPS'));
+  },
+  weekdaysAndWarmup() {
+    const logs = { [d(0)]: closed(0), [d(2)]: { date: d(2), status: 'LOST', points: -50, plan: dayPlan }, [d(3)]: { date: d(3), status: 'EXCUSED' } };
+    const w = E.weekdayStats(start, d(4), logs, pf);
+    assert.strictEqual(w[0].closed, 1); assert.strictEqual(w[0].rate, 1);
+    assert.strictEqual(w[1].skipped, 1);   // Tuesday never closed
+    assert.strictEqual(w[2].skipped, 1); assert.strictEqual(w[3].excused, 1); assert.strictEqual(w[3].planned, 0);
+    assert.deepStrictEqual(E.parseWarmup('Jumping jacks — 45\nSquats\n\nPlank: 30 s'), [{ name: 'Jumping jacks', secs: 45 }, { name: 'Squats', secs: 40 }, { name: 'Plank', secs: 30 }]);
+  },
 };
 
 let failed = 0;
