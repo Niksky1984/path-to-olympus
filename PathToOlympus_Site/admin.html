@@ -39,6 +39,10 @@
     month: null,
     metric: 'POINTS',
     settings: null,
+    questDraft: null,
+    rewardDraft: null,
+    reportMonth: null,
+    report: false,
   };
   const blankDay = () => ({ targetMinutes: 0, note: '', exercises: [] });
   const clone = (x) => JSON.parse(JSON.stringify(x));
@@ -83,8 +87,9 @@
     return `<div class="card"><div class="row">${O.avatarHTML(p, 64)}<div class="grow"><h3>${esc(p.name)}</h3>
         <div class="small">Glory <b>${O.fmtNum(p.score)}</b> · streak <b>${O.n0(p.currentStreak)}</b> (best ${O.n0(p.bestStreak)})</div>
         <div class="small muted">Journey started ${p.startDate ? O.fmtDate(p.startDate) : '— (starts when David first opens his app)'}</div></div></div>
+        <div class="small">Rank <b>${esc(O.rank().rank.title)}</b> · treasury ◎ ${O.fmtNum(O.treasury())}</div>
         <p class="small" style="margin-top:10px"><b>Today:</b> ${today} <button class="btn-text" data-act="day" data-date="${S.today}">Details</button></p></div>`
-      + O.calendarCard(A.month) + O.totalsCard() + O.trendsCard(A.metric) + O.trajectoryCard() + O.horizonsCard();
+      + requestsCard(false) + messagesCard() + O.calendarCard(A.month) + O.totalsCard() + O.trendsCard(A.metric) + O.trajectoryCard() + O.horizonsCard();
   }
 
   /* ------------------------- Admin: fix / excuse a day ------------------------- */
@@ -125,6 +130,111 @@
       </div></div>`;
     return html;
   }
+
+  /* ----------------------- v6: messages + shop requests ----------------------- */
+
+  function messagesCard() {
+    const list = S.messages.slice(0, 6).map((m) => `<div class="msg-old"><div class="row"><span class="muted tiny grow">${O.fmtMillis(m.at)} · ${m.readAt ? 'seen ✓' : 'not seen yet'}${m.reaction ? ' · David: ' + m.reaction : ''}</span>
+      <button class="btn-text danger-text" data-act="msg-del" data-id="${m.id}">✕</button></div><p>${esc(m.text)}</p></div>`).join('');
+    return `<div class="card">${O.section('Message to David')}<textarea id="msg-text" rows="3" maxlength="500" placeholder="Praise, a tip, or a challenge… It appears on his home screen."></textarea>
+      <button class="btn-line" data-act="msg-send" style="margin-top:8px">Send</button>${list ? `<div style="margin-top:10px">${list}</div>` : ''}</div>`;
+  }
+  function requestsCard(all) {
+    const pend = S.requests.filter((r) => r.status === 'PENDING');
+    if (!all && !pend.length) return '';
+    const row = (r) => `<div class="req ${r.status.toLowerCase()}"><span>${esc(r.emoji || '🎁')}</span><div class="grow"><b>${esc(r.title)}</b><div class="muted tiny">${O.fmtMillis(r.at)} · ◎ ${O.fmtNum(r.cost)}${r.note ? ' · ' + esc(r.note) : ''}</div></div>
+      ${r.status === 'PENDING' ? `<button class="btn-line small-btn" data-act="req-yes" data-id="${r.id}">Approve</button><button class="btn-text danger-text" data-act="req-no" data-id="${r.id}">Decline</button>` : `<span class="req-st">${r.status === 'APPROVED' ? '✅' : '✕'}</span>`}</div>`;
+    const done = all ? S.requests.filter((r) => r.status !== 'PENDING').slice(0, 20) : [];
+    return `<div class="card">${O.section(pend.length ? `Shop requests · ${pend.length} waiting` : 'Shop requests')}${pend.map(row).join('') || '<p class="muted small">Nothing waiting.</p>'}
+      ${done.length ? `<div class="muted tiny" style="margin-top:8px">History</div>${done.map(row).join('')}` : ''}</div>`;
+  }
+
+  /* --------------------------------- quests --------------------------------- */
+
+  const QUEST_TEMPLATES = [
+    ['150 push-ups this week', { kind: 'reps', exercise: 'PUSH_UPS', goal: 150, bonus: 150 }],
+    ['50 pull-ups this week', { kind: 'reps', exercise: 'PULL_UPS', goal: 50, bonus: 200 }],
+    ['10 min of plank this week', { kind: 'reps', exercise: 'PLANK', goal: 600, bonus: 200 }],
+    ['Close 5 days this week', { kind: 'days', goal: 5, bonus: 150 }],
+    ['1,000 points this week', { kind: 'points', goal: 1000, bonus: 150 }],
+  ];
+  function newQuest(tpl) {
+    const from = S.today, mon = E.mondayOf(S.today);
+    return { id: '', title: tpl ? tpl[0] : '', kind: 'reps', exercise: 'PUSH_UPS', goal: 100, bonus: 100, from, days: tpl ? E.diffDays(from, E.addDays(mon, 6)) + 1 : 7, ...(tpl ? tpl[1] : {}) };
+  }
+  function questEditor() {
+    const q = A.questDraft, to = E.addDays(q.from, Math.max(1, q.days) - 1);
+    const timed = q.kind === 'reps' && E.isTimed(q.exercise);
+    return `<div class="card">${O.section(q.id ? 'Edit quest' : 'New quest')}
+      ${q.id ? '' : `<div class="chips" style="flex-wrap:wrap;margin-bottom:8px">${QUEST_TEMPLATES.map((t, i) => `<button class="chip" data-act="q-tpl" data-i="${i}">${esc(t[0])}</button>`).join('')}</div>`}
+      <label class="field"><span>Title (what David sees)</span><input data-bind="q" data-f="title" value="${esc(q.title)}" placeholder="${esc(E.questGoalText(q))}"></label>
+      <label class="field"><span>What counts</span><select data-change="q-kind">${E.QUEST_KINDS.map((k) => `<option value="${k.id}" ${q.kind === k.id ? 'selected' : ''}>${esc(k.label)}</option>`).join('')}</select></label>
+      ${q.kind === 'reps' ? `<label class="field"><span>Exercise</span><select data-change="q-ex">${E.EXERCISES.map((x) => `<option value="${x.id}" ${q.exercise === x.id ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select></label>` : ''}
+      <div class="grid2"><label class="field"><span>Goal${timed ? ' (seconds)' : q.kind === 'reps' ? ` (${E.EX[q.exercise].unit})` : ''}</span><input inputmode="numeric" data-bind="q" data-f="goal" value="${esc(q.goal)}"></label>
+      <label class="field"><span>Bonus Glory</span><input inputmode="numeric" data-bind="q" data-f="bonus" value="${esc(q.bonus)}"></label></div>
+      ${timed ? `<p class="muted small">${E.fmtSecs(O.n0(q.goal))} in total.</p>` : ''}
+      <div class="row"><div class="grow">Starts</div><button class="icon" data-act="q-from" data-d="-1">‹</button><b>${O.fmtDate(q.from, 'day')}</b><button class="icon" data-act="q-from" data-d="1">›</button></div>
+      <div class="row" style="margin-top:6px"><div class="grow">Lasts</div>${stepper('days', q.days, 'data-act="q-days"', 1, 1, 92)}</div>
+      <p class="muted small">From ${O.fmtDate(q.from, 'day')} to ${O.fmtDate(to, 'day')}. David's closed days in these dates count. When he reaches the goal, he gets the bonus and a celebration.</p>
+      <div class="row"><button class="btn-line grow" data-act="q-cancel" style="min-height:52px">Cancel</button><div class="grow"><button class="btn-gold" data-act="q-save">Save quest</button></div></div></div>`;
+  }
+  function questsTab() {
+    if (A.questDraft) return questEditor();
+    const la = O.logsArr();
+    const label = { active: 'ACTIVE', upcoming: 'UPCOMING', done: 'DONE ✓', missed: 'MISSED' };
+    let html = `<button class="btn-gold" data-act="q-new">New quest</button><div style="height:14px"></div>`;
+    if (!S.quests.length) html += `<p class="muted">Quests are challenges with dates and a bonus — "150 push-ups this week". They show on David's home with a progress bar.</p>`;
+    S.quests.forEach((q) => {
+      const st = E.questState(q, S.today, la), pr = E.questProgress(q, la), timed = q.kind === 'reps' && E.isTimed(q.exercise);
+      html += `<div class="card quest ${st}"><div class="row"><b class="grow">${esc(q.title || E.questGoalText(q))}</b><span class="tag ${st === 'done' ? 'active' : st === 'missed' ? 'danger-text' : 'ghost'}">${label[st]}</span></div>
+        <div class="muted small">${esc(E.questGoalText(q))} · ${O.fmtDate(q.from, 'dm')} – ${O.fmtDate(q.to, 'dm')} · +${O.fmtNum(q.bonus)} Glory${q.claimedAt ? ' · paid' : ''}</div>
+        ${O.bar(pr.frac, st === 'upcoming')}<div class="q-nums">${timed ? `${E.fmtSecs(pr.have)} / ${E.fmtSecs(pr.goal)}` : `${O.fmtNum(pr.have)} / ${O.fmtNum(pr.goal)}`}</div>
+        <div class="row"><button class="btn-text" data-act="q-edit" data-id="${q.id}">Edit</button><button class="btn-text" data-act="q-copy" data-id="${q.id}">Repeat next week</button><button class="btn-text danger-text" data-act="q-del" data-id="${q.id}">Delete</button></div></div>`;
+    });
+    return html;
+  }
+
+  /* ---------------------------------- shop ---------------------------------- */
+
+  function shopTab() {
+    const r = A.rewardDraft || (A.rewardDraft = { emoji: '🎁', title: '', cost: 1000, note: '' });
+    let html = `<div class="card"><p class="small">David spends his <b>treasury</b> here: Glory minus what he already asked for. His Glory score and rank never go down.
+      Treasury now: <b>◎ ${O.fmtNum(O.treasury())}</b> (Glory ${O.fmtNum(O.profile().score)} − spent ${O.fmtNum(O.spent())}).</p>
+      <p class="muted small">Tip: David earns about ${O.fmtNum(Math.round(O.baseline().pointsPerDay || 150))} Glory a day. A 1-week reward ≈ ${O.fmtNum(Math.round((O.baseline().pointsPerDay || 150) * 7 / 100) * 100)}.</p></div>`;
+    html += requestsCard(true);
+    html += `<div class="card">${O.section('Rewards')}`;
+    html += S.rewards.map((x) => `<div class="reward ${x.active === false ? 'locked' : ''}"><span class="rw-emoji">${esc(x.emoji || '🎁')}</span><div class="grow"><b>${esc(x.title)}</b>${x.note ? `<div class="muted small">${esc(x.note)}</div>` : ''}<div class="rw-cost">◎ ${O.fmtNum(x.cost)}</div></div>
+      <button class="btn-text" data-act="rw-toggle" data-id="${x.id}">${x.active === false ? 'Show' : 'Hide'}</button><button class="btn-text danger-text" data-act="rw-del" data-id="${x.id}">✕</button></div>`).join('') || '<p class="muted small">No rewards yet — add the first one below.</p>';
+    html += `</div><div class="card">${O.section('Add a reward')}
+      <div class="grid2"><label class="field"><span>Emoji</span><input data-bind="rw" data-f="emoji" value="${esc(r.emoji)}" maxlength="4"></label><label class="field"><span>Price (Glory)</span><input inputmode="numeric" data-bind="rw" data-f="cost" value="${esc(r.cost)}"></label></div>
+      <label class="field"><span>Reward</span><input data-bind="rw" data-f="title" value="${esc(r.title)}" placeholder="Pizza night, new game, a day off training…"></label>
+      <label class="field"><span>Note (optional)</span><input data-bind="rw" data-f="note" value="${esc(r.note)}"></label>
+      <button class="btn-gold" data-act="rw-add">Add reward</button></div>`;
+    return html;
+  }
+
+  /* -------------------------------- insights -------------------------------- */
+
+  const dismissed = () => { try { return JSON.parse(localStorage.getItem('olympus_prog_dismissed')) || []; } catch (e) { return []; } };
+  function progressionCard() {
+    const list = E.progressionSuggestions(S.today, S.logs, O.planForDate).filter((s) => !dismissed().includes(s.key));
+    const f = (id, l) => l.map((v) => (E.isTimed(id) ? E.fmtSecs(v) : v)).join(' · ');
+    const rows = list.map((s) => `<div class="inset prog"><b>${esc(E.EX[s.exercise].name)}</b>
+      <div class="small">Hit the target the last ${s.hits} times. Suggest: ${E.lvl(s.level).roman} ${f(s.exercise, s.from)} → <b>${E.lvl(s.newLevel).roman} ${f(s.exercise, s.to)}</b>${s.newLevel > s.level ? ' (next level, fewer reps)' : ''}</div>
+      <div class="row"><button class="btn-line small-btn" data-act="prog-apply" data-key="${esc(s.key)}">Apply to the plan</button><button class="btn-text" data-act="prog-dismiss" data-key="${esc(s.key)}">Not now</button></div></div>`).join('');
+    return `<div class="card">${O.section('Smart progression')}${rows || '<p class="muted small">No suggestions right now. When David reaches the plan 3 times in a row for an exercise, a suggestion to raise it appears here.</p>'}</div>`;
+  }
+  function reportCard() {
+    const m = A.reportMonth || (A.reportMonth = S.today.slice(0, 7));
+    const [y, mo] = m.split('-').map(Number);
+    return `<div class="card">${O.section('Monthly report (PDF)')}<div class="row"><button class="icon" data-act="rp-month" data-dir="-1">‹</button><b class="grow center">${['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'][mo - 1]} ${y}</b><button class="icon" data-act="rp-month" data-dir="1">›</button></div>
+      <p class="muted small">Opens a one-page report. In the print window choose <b>Save as PDF</b>.</p><button class="btn-line" data-act="rp-open">📄 Create the report</button></div>`;
+  }
+  function testsAdminCard() {
+    if (!S.tests.length) return `<div class="card">${O.section('Trial of Heracles')}<p class="muted small">David can take the monthly strength test from his home screen. Results appear here.</p></div>`;
+    return O.testsCard() + `<div class="card"><p class="muted small">Remove a test (for example if it was entered by mistake): David can then take it again this month.</p>${S.tests.slice().reverse().map((t) => `<button class="btn-text danger-text" data-act="test-del" data-id="${t.id}">✕ ${t.id}</button>`).join(' ')}</div>`;
+  }
+  const insightsTab = () => progressionCard() + O.weekdayCard() + O.heatmapCard() + testsAdminCard() + reportCard();
 
   /* ------------------------------- day editor ------------------------------- */
 
@@ -255,6 +365,7 @@
         <div>Points per minute</div>${inp('perMinute', sc.perMinute)}<span></span>
         <div>Skipped-day penalty</div>${inp('penalty', sc.penalty, '1')}<span></span>
         <div>"Completed" day at % of plan</div>${inp('completeAt', sc.completeAt, '1')}<span></span>
+        <div>Monthly Trial of Heracles bonus</div>${inp('testBonus', sc.testBonus, '1')}<span></span>
       </div></div>
       <div class="row"><button class="btn-line grow" data-act="sc-reset" style="min-height:52px">Reset to defaults</button><div class="grow"><button class="btn-gold" data-act="sc-save">Save formula</button></div></div>`;
   }
@@ -283,8 +394,12 @@
       ['chronicle', 'Chronicle: month backgrounds and circles', () => E.UI_SLOTS.months.map(([k, l]) => slot(k, l, 'image or GIF, ~1080×1000')).join('')
         + E.UI_SLOTS.circles.map(([k, l]) => slot(k, l, '1:1 image or GIF (the day number is printed on top)')).join('')],
       ['codex', 'Codex (guide page) images', () => slot('guide_header', 'Codex banner', 'wide image or GIF, ~1080×600')
+        + slot('guide_warmup', 'Warm-up picture (shown during the warm-up)', 'image or GIF, ~1080 wide')
         + E.GUIDE_SECTIONS.map(([id, t]) => slot('guide_' + id, 'Section · ' + t, 'any ratio, ~1080 wide')).join('')
         + '<p class="muted small">The Codex shows the exercise images from the "Exercise images" group for each level.</p>'],
+      ['ranks', 'Ranks: badges and avatar frames', () => E.RANKS.map((r) => slot('rank_' + r.id, `Rank badge · ${r.title} (${O.fmtNum(r.min)} Glory)`, '1:1 transparent PNG/WebP')).join('')
+        + E.RANKS.map((r) => slot('frame_' + r.id, `Avatar frame · ${r.title}`, '1:1 transparent ring, drawn over the avatar')).join('')
+        + '<p class="muted small">Empty badges are drawn automatically. A frame should be a transparent ring a bit larger than the round avatar.</p>'],
       ['nav', 'Navigation buttons', () => E.UI_SLOTS.nav.map(([k, l]) => slot(k, l, k === 'nav_bg' ? 'wide ~1080×240' : '1:1 transparent, 256×256')).join('')],
       ['hall', 'Hall of Glory', () => E.UI_SLOTS.hall.map(([k, l]) => slot(k, l, '9:16 image or GIF')).join('')
         + E.MEDALS.map((m) => slot('medal_' + m.id, 'Medal · ' + m.title, '1:1 image or GIF')).join('')
@@ -308,8 +423,9 @@
     let html = `<div class="card"><p class="small">This is the text of David's <b>Codex</b> page. Leave a box empty to keep the default text, which is shown greyed out inside the box.
       Add pictures in <b>Media → Codex</b>. The exercise pictures come from <b>Media → Exercise images</b>.</p></div>`;
     html += `<div class="card">${O.section('Sections')}${E.GUIDE_SECTIONS.map(([id, t]) => area(id, t, 4)).join('')}</div>`;
+    html += `<div class="card">${O.section('Warm-up')}<p class="muted small">One move per line, with its seconds at the end: "Jumping jacks — 45". David's Trial page counts them down one by one.</p>${area('warmup', 'Warm-up moves', 8)}</div>`;
     E.EXERCISES.forEach((x) => {
-      html += `<div class="card">${O.section(x.name)}${[1, 2, 3].map((l) => area(E.guideExKey(x.id, l), `${E.lvl(l).label} — what it means`, 3)).join('')}</div>`;
+      html += `<div class="card">${O.section(x.name)}${[1, 2, 3].map((l) => area(E.guideExKey(x.id, l), `${E.lvl(l).label} — what it means`, 3)).join('')}${area('tips_' + x.id, 'Good form — one tip per line (shown under "How to do it")', 4)}</div>`;
     });
     return html + `<button class="btn-gold" data-act="guide-save">Save Codex text</button>`;
   }
@@ -340,8 +456,8 @@
         <label class="btn-line file-btn">⬆ Restore from file<input type="file" accept="application/json,.json" data-change="restore" hidden></label></div>
         <p class="muted tiny">A backup is downloaded automatically before every reset.</p></div>
       <div class="card danger-zone">${O.section('Start again')}
-        <p class="small">Deletes every closed day, skipped day, medal and coat of arms, and sets points and streaks to 0. The journey starts again today.
-        <b>Plans, targets, scoring, pictures, videos, the Codex, David's name and photo stay.</b></p>
+        <p class="small">Deletes every closed day, skipped day, medal, coat of arms, monthly test and shop request, and sets points and streaks to 0. Quests can be won again. The journey starts again today.
+        <b>Plans, quests, rewards, messages, targets, scoring, pictures, videos, the Codex, David's name and photo stay.</b></p>
         ${A.resetAsk ? `<p class="small">Type <b>RESET</b> to confirm:</p><input id="reset-word" autocomplete="off" style="text-transform:uppercase">
           <div class="row" style="margin-top:8px"><button class="btn-line grow" data-act="reset-cancel">Cancel</button><button class="btn-line danger grow" data-act="reset-go">Reset everything</button></div>`
         : `<button class="btn-line danger" data-act="reset-ask">Reset David's journey…</button>`}</div>
@@ -365,11 +481,14 @@
     else if (!O.loaded()) body = `<div class="empty">${O.laurelSVG(100)}<p>Loading the chronicle…</p></div>`;
     else if (A.dayEdit) body = dayEditCard();
     else {
-      const tabs = [['overview', 'Overview'], ['plans', 'Plans'], ['targets', 'Targets'], ['scoring', 'Scoring'], ['media', 'Media'], ['guide', 'Guide'], ['settings', 'Settings']];
-      const views = { overview, plans: plansTab, targets: targetsTab, scoring: scoringTab, media: mediaTab, guide: guideTab, settings: settingsTab };
+      const pend = S.requests.filter((r) => r.status === 'PENDING').length;
+      const tabs = [['overview', 'Overview'], ['plans', 'Plans'], ['quests', 'Quests'], ['shop', pend ? `Shop (${pend})` : 'Shop'], ['insights', 'Insights'], ['targets', 'Targets'], ['scoring', 'Scoring'], ['media', 'Media'], ['guide', 'Guide'], ['settings', 'Settings']];
+      const views = { overview, plans: plansTab, quests: questsTab, shop: shopTab, insights: insightsTab, targets: targetsTab, scoring: scoringTab, media: mediaTab, guide: guideTab, settings: settingsTab };
       body = `<div class="subtabs">${tabs.map(([k, l]) => `<button class="${A.sub === k ? 'on' : ''}" data-act="sub" data-sub="${k}">${l}</button>`).join('')}</div><div style="height:12px"></div>${views[A.sub]()}`;
     }
-    app.innerHTML = topbar() + `<main style="padding-bottom:40px">${body}</main>`;
+    app.innerHTML = topbar() + `<main style="padding-bottom:40px">${body}</main>`
+      + (A.report && unlocked() && O.loaded() ? `<div class="print-wrap"><div class="print-bar no-print"><button class="btn-line" data-act="rp-close">Close</button><button class="btn-gold" data-act="rp-print">🖨 Print / Save as PDF</button></div>${O.reportHTML(A.reportMonth)}</div>` : '');
+    document.body.classList.toggle('printing', !!A.report);
     pending = false;
   }
   function softRender() { if (typing()) pending = true; else render(); }
@@ -389,6 +508,8 @@
     else if (d.bind === 's-name') A.settings.name = el.value;
     else if (d.bind === 'de-reason') A.dayEdit.reason = el.value;
     else if (d.bind === 'guide') A.guideDraft[d.key] = el.value;
+    else if (d.bind === 'q') A.questDraft[d.f] = d.f === 'title' ? el.value : el.value.replace(/[^0-9]/g, '');
+    else if (d.bind === 'rw') A.rewardDraft[d.f] = d.f === 'cost' ? el.value.replace(/[^0-9]/g, '') : el.value;
     else if (d.bind === 'sc') {
       const [a, b] = d.path.split('.');
       const v = numOrBlank(el.value);
@@ -405,6 +526,8 @@
     }
     if (d.change === 'de-add' && el.value) { A.dayEdit.entries.push({ exercise: el.value, level: 1, perSet: [E.EX[el.value].dflt] }); render(); }
     if (d.change === 'restore' && el.files && el.files[0]) restoreFrom(el.files[0]);
+    if (d.change === 'q-kind') { A.questDraft.kind = el.value; render(); }
+    if (d.change === 'q-ex') { A.questDraft.exercise = el.value; render(); }
     if (d.bind === 'sc') render(); // refresh the worked example
   });
 
@@ -467,7 +590,7 @@
         O.ADMIN.lock(); try { await be.forgetAdmin(S.user.uid); } catch (err) { console.warn(err); } await O.ADMIN.refresh(); break;
 
       /* navigation */
-      case 'sub': A.sub = d.sub; A.settings = null; A.targetDrafts = {}; A.scDraft = null; A.guideDraft = null; window.scrollTo(0, 0); break;
+      case 'sub': A.sub = d.sub; A.settings = null; A.questDraft = null; A.report = false; A.targetDrafts = {}; A.scDraft = null; A.guideDraft = null; window.scrollTo(0, 0); break;
       case 'guide-save': {
         const texts = Object.fromEntries(Object.entries(A.guideDraft || {}).map(([k, v]) => [k, String(v || '').trim()]));
         await O.adminOp('Codex text saved', () => be.saveGuide(texts)); A.guideDraft = null; break;
@@ -551,6 +674,94 @@
       case 's-start': A.settings.start = E.addDays(A.settings.start, +d.d); break;
       case 's-start-save': await O.adminOp('Journey start saved', () => be.updateProfile({ startDate: A.settings.start, lastEvaluated: null })); break;
 
+      /* v6: messages */
+      case 'msg-send': {
+        const text = val('msg-text').trim();
+        if (!text) return O.toast('Write a message first');
+        await O.adminOp('Message sent', () => be.saveDoc('messages', null, { text, at: Date.now(), from: 'council' }));
+        break;
+      }
+      case 'msg-del': if (!confirm('Delete this message?')) return; await O.adminOp('Message deleted', () => be.deleteDoc('messages', d.id)); break;
+      /* shop */
+      case 'req-yes': await O.adminOp('Approved — enjoy!', () => be.patchDoc('requests', d.id, { status: 'APPROVED', decidedAt: Date.now() })); break;
+      case 'req-no': {
+        const note = prompt('Decline — a short reason for David (optional):', '');
+        if (note === null) return;
+        await O.adminOp('Declined — the Glory went back to his treasury', () => be.patchDoc('requests', d.id, { status: 'DECLINED', decidedAt: Date.now(), note: note.trim() }));
+        break;
+      }
+      case 'rw-add': {
+        const r = A.rewardDraft;
+        if (!r.title.trim() || !O.n0(r.cost)) return O.toast('Give the reward a name and a price');
+        if (await O.adminOp('Reward added', () => be.saveDoc('rewards', null, { emoji: r.emoji.trim() || '🎁', title: r.title.trim(), cost: O.n0(r.cost), note: r.note.trim(), active: true, createdAt: Date.now() }))) A.rewardDraft = null;
+        break;
+      }
+      case 'rw-toggle': { const r = S.rewards.find((x) => x.id === d.id); if (r) await O.adminOp(r.active === false ? 'Shown in the shop' : 'Hidden from the shop', () => be.patchDoc('rewards', d.id, { active: r.active === false })); break; }
+      case 'rw-del': if (!confirm('Delete this reward? Requests already made stay.')) return; await O.adminOp('Reward deleted', () => be.deleteDoc('rewards', d.id)); break;
+      /* quests */
+      case 'q-new': A.questDraft = newQuest(); window.scrollTo(0, 0); break;
+      case 'q-tpl': A.questDraft = newQuest(QUEST_TEMPLATES[+d.i]); break;
+      case 'q-edit': { const q = S.quests.find((x) => x.id === d.id); if (q) { A.questDraft = { ...q, days: E.diffDays(q.from, q.to) + 1 }; window.scrollTo(0, 0); } break; }
+      case 'q-copy': {
+        const q = S.quests.find((x) => x.id === d.id); if (!q) break;
+        const len = E.diffDays(q.from, q.to) + 1, from = E.addDays(q.from, 7 * Math.max(1, Math.ceil(len / 7)));
+        A.questDraft = { ...q, id: '', from: from < S.today ? S.today : from, days: len }; delete A.questDraft.claimedAt; delete A.questDraft.celebrated; window.scrollTo(0, 0); break;
+      }
+      case 'q-cancel': A.questDraft = null; break;
+      case 'q-from': A.questDraft.from = E.addDays(A.questDraft.from, +d.d); break;
+      case 'q-days': A.questDraft.days = O.clamp(O.n0(A.questDraft.days) + +d.d, 1, 92); break;
+      case 'q-save': {
+        const q = A.questDraft;
+        if (!O.n0(q.goal)) return O.toast('Set a goal');
+        const doc = { title: (q.title || '').trim(), kind: q.kind, goal: O.n0(q.goal), bonus: O.n0(q.bonus), from: q.from, to: E.addDays(q.from, Math.max(1, O.n0(q.days)) - 1), createdAt: q.createdAt || Date.now() };
+        if (q.kind === 'reps') doc.exercise = q.exercise;
+        if (q.claimedAt) { doc.claimedAt = q.claimedAt; doc.celebrated = true; }
+        if (await O.adminOp('Quest saved', () => be.saveDoc('quests', q.id || null, doc))) {
+          A.questDraft = null;
+          if (doc.claimedAt && q.id) await O.adminRecompute({ quest: { id: q.id, bonus: doc.bonus } });
+        }
+        break;
+      }
+      case 'q-del': {
+        const q = S.quests.find((x) => x.id === d.id);
+        if (!q || !confirm(`Delete the quest "${q.title || E.questGoalText(q)}"?${q.claimedAt ? ' Its bonus is taken back from his Glory.' : ''}`)) return;
+        if (await O.adminOp('Quest deleted', () => be.deleteDoc('quests', d.id)) && q.claimedAt) await O.adminRecompute({ quest: { id: q.id, bonus: null } });
+        break;
+      }
+      /* insights */
+      case 'prog-dismiss': localStorage.setItem('olympus_prog_dismissed', JSON.stringify(dismissed().concat([d.key]).slice(-50))); break;
+      case 'prog-apply': {
+        const sg = E.progressionSuggestions(S.today, S.logs, O.planForDate).find((x) => x.key === d.key);
+        if (!sg) break;
+        const touched = S.plans.filter((p) => E.planEnd(p) > S.today && E.DOW.some((x) => ((p.days[x] || {}).exercises || []).some((y) => y.exercise === sg.exercise)));
+        if (!touched.length) return O.toast('No current plan has this exercise');
+        if (!confirm(`Change ${E.EX[sg.exercise].name} in ${touched.length} plan(s)? Every day with this exercise gets the new numbers.`)) return;
+        const delta = sg.to[0] - sg.from[0];
+        await O.adminOp('Plan updated — David sees it on his next day', async () => {
+          for (const p of touched) {
+            const c = clone(p);
+            E.DOW.forEach((x) => ((c.days[x] || {}).exercises || []).forEach((y) => {
+              if (y.exercise !== sg.exercise) return;
+              const cur = E.setList(E.planEntry(y));
+              y.targetPerSet = sg.newLevel !== sg.level ? sg.to.slice() : cur.map((v) => v + delta);
+              y.level = sg.newLevel; delete y.targetReps; delete y.targetSets;
+            }));
+            E.DOW.forEach((x) => { if (c.days[x]) c.days[x].targetMinutes = E.plannedMinutes(c.days[x]); });
+            await be.savePlan(c);
+          }
+        });
+        break;
+      }
+      case 'test-del': {
+        const t = S.tests.find((x) => x.id === d.id);
+        if (!t || !confirm(`Remove the Trial of ${t.id}? Its bonus is taken back.`)) return;
+        if (await O.adminOp('Test removed', () => be.deleteDoc('tests', d.id))) await O.adminRecompute({ test: { id: t.id, bonus: null } });
+        break;
+      }
+      case 'rp-month': { const [y, m] = A.reportMonth.split('-').map(Number); A.reportMonth = new Date(Date.UTC(y, m - 1 + +d.dir, 1)).toISOString().slice(0, 7); break; }
+      case 'rp-open': A.report = true; window.scrollTo(0, 0); break;
+      case 'rp-close': A.report = false; break;
+      case 'rp-print': window.print(); return;
       case 'demo-next': case 'demo-today': case 'demo-wipe': O.demoAction(d.act); return;
       default: return;
     }
