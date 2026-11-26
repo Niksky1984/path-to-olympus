@@ -509,7 +509,7 @@
 
   /* ============================ VERSION & UPDATES ============================ */
 
-  const APP_VERSION = '6.0';
+  const APP_VERSION = '6.1';
   /** Register the service worker; when a newer version takes over, offer a one-tap update. */
   function watchUpdates() {
     if (!('serviceWorker' in navigator) || !location.protocol.startsWith('http')) return;
@@ -1195,20 +1195,19 @@
 
   /* ============================== v6 cards ============================== */
 
-  /** Rank badge: the Admin's picture (media/rank_<id>) or a drawn laurel shield with the rank number. */
-  function rankBadgeHTML(idx, size) {
-    const r = E.RANKS[idx], url = mediaURL('rank_' + r.id);
-    if (url) return `<span class="art" style="width:${size}px;height:${size}px"><img src="${esc(url)}" alt="${esc(r.title)}"></span>`;
-    return `<svg class="rank-badge" width="${size}" height="${size}" viewBox="0 0 100 100" aria-label="${esc(r.title)}">
-      <circle cx="50" cy="50" r="46" fill="${r.color}" stroke="${C.gold}" stroke-width="3"/>
-      ${laurelLeaves(50, 52, 34, C.goldLight, 7, 0.9)}
-      <text x="50" y="61" text-anchor="middle" font-family="Cinzel, Georgia, serif" font-weight="700" font-size="30" fill="${C.goldLight}">${E.roman(idx + 1)}</text></svg>`;
+  /**
+   * A rank shown as its wreath around David's round avatar (media/frame_<rank id>).
+   * Frame art geometry (all 8 files): canvas 1.75 × 1.55 avatar diameters, the avatar circle centred at the top.
+   * fit = reserve room for the whole wreath in the layout (otherwise it hangs over what is around it).
+   */
+  function rankFrameHTML(idx, size, p, locked, fit) {
+    const r = E.RANKS[idx], url = mediaURL('frame_' + r.id);
+    const inner = locked ? '<i class="rf-empty"></i>' : avatarHTML(p || profile(), size);
+    const fr = `<span class="rank-frame ${url ? '' : 'plain'} ${locked ? 'locked' : ''}" style="--rc:${r.color};width:${size}px;height:${size}px">${inner}${url ? `<img class="rf-img" src="${esc(url)}" alt="${esc(r.title)}">` : ''}</span>`;
+    return fit ? `<span class="rf-fit" style="width:${Math.round(size * 1.75)}px;height:${Math.round(size * 1.55)}px">${fr}</span>` : fr;
   }
-  /** Avatar inside a frame that shows David's rank (media/frame_<rank id> overlays it when present). */
-  function avatarFramed(p, size) {
-    const r = rank(), url = mediaURL('frame_' + r.rank.id);
-    return `<span class="av-frame r${r.idx}" style="--rc:${r.rank.color};width:${size}px;height:${size}px">${avatarHTML(p, size)}${url ? `<img class="frame-img" src="${esc(url)}" alt="">` : ''}</span>`;
-  }
+  const rankBadgeHTML = (idx, size) => rankFrameHTML(idx, size, profile(), idx > rank().idx, true);
+  const avatarFramed = (p, size) => rankFrameHTML(rank().idx, size, p, false, true);
   /** Home: rank line under the Glory number. */
   function rankLineHTML() {
     const r = rank();
@@ -1217,9 +1216,10 @@
   /** Hall: the ladder of ranks. */
   function ranksCard() {
     const r = rank();
-    const rows = E.RANKS.map((x, i) => `<div class="rank-row ${i <= r.idx ? 'got' : ''} ${i === r.idx ? 'now' : ''}">${rankBadgeHTML(i, 48)}<div class="grow"><b>${esc(x.title)}</b>
+    const head = `<div class="rank-now">${rankFrameHTML(r.idx, 130, null, false, true)}<h3>${esc(r.rank.title)}</h3>${r.next ? `${bar(r.frac)}<div class="muted small">${fmtNum(r.next.min - n0(profile().score))} Glory to ${esc(r.next.title)}</div>` : '<div class="muted small">The highest rank of all.</div>'}</div>`;
+    const rows = E.RANKS.map((x, i) => `<div class="rank-row ${i <= r.idx ? 'got' : ''} ${i === r.idx ? 'now' : ''}">${rankBadgeHTML(i, 46)}<div class="grow"><b>${esc(x.title)}</b>
       <div class="muted small">${i === 0 ? 'Where every hero begins' : fmtNum(x.min) + ' Glory'}</div>${i === r.idx + 1 ? bar(r.frac, false, 'thin') : ''}</div>${i === r.idx ? '<span class="tag active">YOU</span>' : i < r.idx ? '<span class="ok">✓</span>' : ''}</div>`).join('');
-    return `<div class="card">${section('Ranks')}${rows}</div>`;
+    return `<div class="card">${section('Ranks')}${head}${rows}</div>`;
   }
 
   /** Quests for David's home: active ones, upcoming ones, and those finished in the last 3 days. */
@@ -1570,6 +1570,10 @@
       document.body.appendChild(el);
       return;
     }
+    if (c.type === 'rank' && !c.artReady) {
+      whenMedia('frame_' + E.RANKS[c.idx].id).then(() => { queue.unshift({ ...c, artReady: true }); showNext(); });
+      return;
+    }
     if (c.type === 'quest' || c.type === 'rank' || c.type === 'test') {
       let body;
       if (c.type === 'quest') {
@@ -1577,7 +1581,7 @@
           <h2>${esc(c.quest.title || 'Quest complete')}</h2><p>${esc(E.questGoalText(c.quest))} — done!</p>${n0(c.quest.bonus) ? `<p class="bonus-line">+${fmtNum(c.quest.bonus)} Glory</p>` : ''}`;
       } else if (c.type === 'rank') {
         const r = E.RANKS[c.idx], next = E.RANKS[c.idx + 1];
-        body = `<div class="eyebrow">NEW RANK</div><div class="pop rank-pop">${rankBadgeHTML(c.idx, 170)}</div>
+        body = `<div class="eyebrow">NEW RANK</div><div class="pop rank-pop">${rankFrameHTML(c.idx, 150, null, false, true)}</div>
           <h2>You are now a ${esc(r.title)}</h2><p>${fmtNum(r.min)} Glory earned on the road.</p>${next ? `<p class="muted-light">Next: ${esc(next.title)} at ${fmtNum(next.min)} Glory</p>` : '<p class="muted-light">The highest rank. Olympus is yours.</p>'}`;
       } else {
         const rows = E.TESTS.filter((t) => n0(c.results[t.id])).map((t) => {
@@ -1698,7 +1702,7 @@
     updateEntry, addExtra, removeExtra, closeToday, photoToDataURL, saveAvatarPhoto, adminOp, PIN, ADMIN, toast,
     APP_VERSION, watchUpdates, versionHTML, homeGoalsCard, recordsCard, adminSaveDay, adminDoneLog, backupNow, downloadJSON, pairDevice, davidCodeHash, refreshDavid,
     logsArr, bonusTotal, spent, treasury, rank, thisTest, syncHTML, settings, setSetting, applySettings, beep, adminRecompute, requestReward, reactMessage, markMessageRead, saveTest,
-    rankBadgeHTML, avatarFramed, rankLineHTML, ranksCard, questsCard, treasuryCard, messageCard, messagesListHTML, testHomeCard, testsCard, weekdayCard, heatmapCard, reportHTML, howToHTML, REACTIONS,
+    rankBadgeHTML, rankFrameHTML, avatarFramed, rankLineHTML, ranksCard, questsCard, treasuryCard, messageCard, messagesListHTML, testHomeCard, testsCard, weekdayCard, heatmapCard, reportHTML, howToHTML, REACTIONS,
     backend: () => backend,
     laurelSVG, avatarHTML, medalSVG, coatSVG, emblemSVG, lineChartSVG, rawUrl, mediaURL, awardArt, targetLine,
     bar, labeled, section, videoURL, videoFile, levelBadge, setsEditorHTML, setsEdit, horizonsCard, calendarCard, dayDetailHTML, totalsCard, trendsCard, trajectoryCard, exerciseMediaHTML, exerciseMediaURL, guideText,
