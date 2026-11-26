@@ -56,6 +56,7 @@
     requests: [],
     messages: [],
     tests: [],
+    fx: {},                 // lightning & storm settings (Admin → Effects)
     sync: { offline: typeof navigator !== 'undefined' && navigator.onLine === false, pending: false },
     today: E.todayISO(),
     draft: null, // { date, entries } — David's in-progress edits
@@ -202,6 +203,7 @@
       handlers.awards(Object.entries(db.awards).map(([id, a]) => ({ ...a, id })));
       handlers.media(db.media || { slots: {} });
       handlers.scoring(db.scoring || {});
+      handlers.effects && handlers.effects(db.effects || {});
       handlers.guide(db.guide || { texts: {} });
       ['quests', 'rewards', 'requests', 'messages', 'tests'].forEach((n) => handlers[n] && handlers[n](list(db[n])));
     };
@@ -269,6 +271,7 @@
       async deleteTarget(hid) { delete db.targets[hid]; save(); },
       async setMedia(key, url) { db.media.slots = db.media.slots || {}; if (url) db.media.slots[key] = url; else delete db.media.slots[key]; save(); },
       async saveScoring(sc) { db.scoring = sc; save(); },
+      async saveEffects(v) { db.effects = v; save(); },
       async saveGuide(texts) { db.guide = { texts: { ...((db.guide || {}).texts || {}), ...texts } }; save(); },
       async updateProfile(fields) { db.profile = { ...(db.profile || newProfile(S.today)), ...fields }; save(); },
       async resetJourney(today, keep) {
@@ -362,6 +365,7 @@
           col('awards').onSnapshot((q) => h.awards(q.docs.map((d) => ({ ...d.data(), id: d.id }))), warn('awards')),
           col('config').doc('media').onSnapshot((s) => h.media(s.exists ? s.data() : { slots: {} }), warn('media')),
           col('config').doc('scoring').onSnapshot((s) => h.scoring(s.exists ? s.data() : {}), warn('scoring')),
+          col('config').doc('effects').onSnapshot((s) => h.effects(s.exists ? s.data() : {}), warn('effects')),
           col('config').doc('guide').onSnapshot((s) => h.guide(s.exists ? s.data() : { texts: {} }), warn('guide')),
           ...['quests', 'rewards', 'requests', 'messages', 'tests'].map((n) =>
             col(n).onSnapshot({ includeMetadataChanges: n === 'requests' || n === 'tests' }, (q) => {
@@ -424,6 +428,7 @@
         await col('config').doc('media').set({ slots: { [key]: url ? url : del } }, { merge: true });
       },
       async saveScoring(sc) { await col('config').doc('scoring').set(sc); },
+      async saveEffects(v) { await col('config').doc('effects').set(v); },
       async saveGuide(texts) { await col('config').doc('guide').set({ texts }, { merge: true }); },
       async updateProfile(fields) { await root.set(fields, { merge: true }); },
       /** Start again: delete every day and award, zero the profile (plans, targets, media stay). */
@@ -509,7 +514,7 @@
 
   /* ============================ VERSION & UPDATES ============================ */
 
-  const APP_VERSION = '6.1';
+  const APP_VERSION = '6.2';
   /** Register the service worker; when a newer version takes over, offer a one-tap update. */
   function watchUpdates() {
     if (!('serviceWorker' in navigator) || !location.protocol.startsWith('http')) return;
@@ -543,6 +548,15 @@
   async function start(role) {
     S.role = role;
     if (role === 'david') applySettings();
+    if (window.OlympusFX) {
+      window.OlympusFX.init({
+        cfg: () => window.__fxDraft || S.fx,
+        anchor: () => document.querySelector('.fx-anchor .rank-frame') || document.querySelector('.topbar .rank-frame'),
+        rankColor: () => rank().rank.color,
+        sound: () => role !== 'david' || settings().sound,
+        vibrate: () => role !== 'david' || settings().vibrate,
+      });
+    }
     const forceDemo = /[?&]demo\b/.test(location.search);
     try {
       backend = isConfigured() && !forceDemo ? await firebaseBackend() : localBackend();
@@ -608,6 +622,7 @@
           awards: (v) => { S.awards = v.sort((a, b) => n0(a.earnedAt) - n0(b.earnedAt)); emit(); },
           media: (v) => { S.media = { slots: (v && v.slots) || {} }; emit(); },
           scoring: (v) => { S.scoring = E.scoring(v); emit(); },
+          effects: (v) => { S.fx = v || {}; },
           guide: (v) => { S.guide = { texts: (v && v.texts) || {} }; emit(); },
           quests: (v) => { S.quests = v.sort((a, b) => (a.from < b.from ? 1 : -1)); emit(); },
           rewards: (v) => { S.rewards = v.sort((a, b) => n0(a.cost) - n0(b.cost)); emit(); },
@@ -1544,6 +1559,9 @@
     const c = queue.shift();
     if (!c) { showing = false; return; }
     showing = true;
+    // big moments come with a storm (Admin → Effects decides which ones)
+    const kind = c.type === 'video' ? (c.award ? 'medal' : String(c.key).startsWith('day_failed') ? 'lost' : 'close') : c.type;
+    if (window.OlympusFX && S.role === 'david') window.OlympusFX.storm(kind);
     const el = document.createElement('div');
     el.id = 'celebration';
     const done = () => { el.remove(); showNext(); };
