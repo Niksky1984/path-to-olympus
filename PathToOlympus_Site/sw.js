@@ -1,8 +1,8 @@
 /* Path to Olympus — service worker.
  * App files: network first (updates show up right after you upload to GitHub),
  * falling back to the cached copy offline. Bump VERSION to force a clean cache. */
-const VERSION = 'olympus-v6-1';
-const SHELL = ['./', './index.html', './admin.html', './style.css', './engine.js', './core.js', './config.js',
+const VERSION = 'olympus-v6-2';
+const SHELL = ['./', './index.html', './admin.html', './style.css', './engine.js', './core.js', './fx.js', './config.js',
   './manifest.webmanifest', './admin.webmanifest', './icons/icon-192.png', './icons/admin-192.png', './icons/favicon.png'];
 
 self.addEventListener('install', (e) => {
