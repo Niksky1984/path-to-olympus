@@ -51,6 +51,12 @@
     media: { slots: {} },
     scoring: E.scoring(),
     guide: { texts: {} },
+    quests: [],
+    rewards: [],
+    requests: [],
+    messages: [],
+    tests: [],
+    sync: { offline: typeof navigator !== 'undefined' && navigator.onLine === false, pending: false },
     today: E.todayISO(),
     draft: null, // { date, entries } — David's in-progress edits
     error: null,
@@ -121,6 +127,60 @@
   }
   const earnedIds = () => new Set(S.awards.map((a) => a.id));
 
+  /* ------------------------------ v6 derived ------------------------------ */
+
+  const logsArr = () => Object.values(S.logs);
+  /** Glory from bonuses (finished quests + monthly tests) — kept when the Admin recalculates the score from the days. */
+  const bonusTotal = () => E.sum(S.quests.filter((q) => q.claimedAt), (q) => n0(q.bonus)) + E.sum(S.tests, (t) => n0(t.bonus));
+  /** Glory already spent or reserved in the shop. */
+  const spent = () => E.sum(S.requests.filter((r) => r.status === 'PENDING' || r.status === 'APPROVED'), (r) => n0(r.cost));
+  const treasury = () => Math.max(0, Math.round(n0(profile().score) - spent()));
+  const rank = () => E.rankOf(profile().score);
+  const thisTest = () => S.tests.find((t) => t.id === E.testId(S.today)) || null;
+
+  /* ------------------------- offline / sync indicator ------------------------- */
+
+  let wasPending = false;
+  function setSync(fields) {
+    const before = S.sync.pending || S.sync.offline;
+    Object.assign(S.sync, fields);
+    const now = S.sync.pending || S.sync.offline;
+    if (before && !now && wasPending) toast('Synced ✓ — everything is saved online');
+    wasPending = now;
+    if (before !== now) emit();
+  }
+  if (typeof window !== 'undefined') {
+    window.addEventListener('online', () => setSync({ offline: false }));
+    window.addEventListener('offline', () => setSync({ offline: true }));
+  }
+  /** A small pill under the top bar while something waits to be sent. */
+  function syncHTML() {
+    if (S.demo || !(S.sync.offline || S.sync.pending)) return '';
+    return `<div class="sync-pill ${S.sync.offline ? 'off' : ''}">${S.sync.offline ? '☁︎ Offline — your entries are saved on this phone and will be sent later' : '⟳ Saved on this phone — sending…'}</div>`;
+  }
+
+  /* --------------------------- David's own settings --------------------------- */
+
+  const SET_KEY = 'olympus_settings';
+  const SETTINGS_DEFAULT = { sound: true, vibrate: true, text: 'normal', calm: false };
+  function settings() { try { return { ...SETTINGS_DEFAULT, ...(JSON.parse(localStorage.getItem(SET_KEY)) || {}) }; } catch (e) { return { ...SETTINGS_DEFAULT }; } }
+  function setSetting(k, v) { const s = settings(); s[k] = v; localStorage.setItem(SET_KEY, JSON.stringify(s)); applySettings(); }
+  function applySettings() {
+    if (typeof document === 'undefined' || !document.body) return;
+    const s = settings();
+    document.body.classList.toggle('text-l', s.text === 'large');
+    document.body.classList.toggle('text-xl', s.text === 'xlarge');
+    document.body.classList.toggle('calm', !!s.calm);
+  }
+  /** Beep + buzz, if David allows them. */
+  function beep() {
+    const s = settings();
+    if (s.sound) {
+      try { const a = new (window.AudioContext || window.webkitAudioContext)(); [0, 0.25].forEach((t) => { const o = a.createOscillator(), g = a.createGain(); o.frequency.value = 880; o.connect(g); g.connect(a.destination); g.gain.setValueAtTime(0.25, a.currentTime + t); o.start(a.currentTime + t); o.stop(a.currentTime + t + 0.15); }); } catch (e) { /* silent */ }
+    }
+    if (s.vibrate) { try { navigator.vibrate && navigator.vibrate([200, 100, 200]); } catch (e) { /* none */ } }
+  }
+
   /* ============================== BACKENDS ============================== */
 
   /* ----------------------------- DEMO (localStorage) ----------------------------- */
@@ -128,7 +188,8 @@
   function localBackend() {
     const KEY = 'olympus_demo_db';
     const read = () => { try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch (e) { return {}; } };
-    const blank = () => ({ profile: null, plans: {}, overrides: {}, days: {}, targets: {}, awards: {}, media: { slots: {} }, scoring: {}, guide: { texts: {} } });
+    const blank = () => ({ profile: null, plans: {}, overrides: {}, days: {}, targets: {}, awards: {}, media: { slots: {} }, scoring: {}, guide: { texts: {} }, quests: {}, rewards: {}, requests: {}, messages: {}, tests: {} });
+    const list = (o) => Object.entries(o || {}).map(([id, v]) => ({ ...v, id }));
     let db = Object.assign(blank(), read());
     let handlers = null;
     const push = () => {
@@ -142,6 +203,7 @@
       handlers.media(db.media || { slots: {} });
       handlers.scoring(db.scoring || {});
       handlers.guide(db.guide || { texts: {} });
+      ['quests', 'rewards', 'requests', 'messages', 'tests'].forEach((n) => handlers[n] && handlers[n](list(db[n])));
     };
     const save = () => {
       try { localStorage.setItem(KEY, JSON.stringify(db)); }
@@ -210,10 +272,24 @@
       async saveGuide(texts) { db.guide = { texts: { ...((db.guide || {}).texts || {}), ...texts } }; save(); },
       async updateProfile(fields) { db.profile = { ...(db.profile || newProfile(S.today)), ...fields }; save(); },
       async resetJourney(today, keep) {
-        db.days = {}; db.awards = {};
+        db.days = {}; db.awards = {}; db.tests = {}; db.requests = {};
+        Object.values(db.quests).forEach((q) => { delete q.claimedAt; delete q.celebrated; });
         db.profile = { ...newProfile(today), ...keep, resetAt: Date.now() }; save();
       },
       async setDay(date, log) { if (log) db.days[date] = { ...log, date }; else delete db.days[date]; save(); },
+      /* v6: quests, shop, messages, monthly test */
+      async saveDoc(coll, id, data) { id = id || uid(); db[coll][id] = { ...data }; delete db[coll][id].id; save(); return id; },
+      async patchDoc(coll, id, fields) { if (db[coll][id]) { db[coll][id] = { ...db[coll][id], ...fields }; save(); } },
+      async deleteDoc(coll, id) { delete db[coll][id]; save(); },
+      async claimQuest(id, bonus) {
+        const q = db.quests[id];
+        if (!q || q.claimedAt) return false;
+        q.claimedAt = Date.now(); q.celebrated = true; db.profile.score = n0(db.profile.score) + n0(bonus); save(); return true;
+      },
+      async saveTest(id, doc, bonus) {
+        if (db.tests[id]) throw new Error('This month\'s Trial is already done');
+        db.tests[id] = doc; db.profile.score = n0(db.profile.score) + n0(bonus); save();
+      },
       // pairing is not needed in demo (one browser = one device)
       async davidState() { return { ready: true, registered: true }; },
       async registerDavid() {},
@@ -245,6 +321,9 @@
     const adminPin = db.collection('adminPin').doc('main');      // secret: nobody can read it
     const adminInfo = db.collection('adminState').doc('main');   // public: "a PIN exists"
     const adminDev = (uid) => db.collection('admins').doc(uid);   // devices that proved the PIN
+    /* offline indicator: which listeners still have writes waiting for the server */
+    const pendingBy = {};
+    const pend = (k, v) => { pendingBy[k] = v; setSync({ pending: Object.values(pendingBy).some(Boolean) }); };
 
     return {
       demo: false,
@@ -275,15 +354,20 @@
       listen(h) {
         const warn = (what) => (err) => { console.warn('listen', what, err); S.error = `${what}: ${err.message}`; emit(); };
         const unsubs = [
-          root.onSnapshot((s) => h.profile(s.exists ? s.data() : null), warn('profile')),
+          root.onSnapshot({ includeMetadataChanges: true }, (s) => { pend('profile', s.metadata.hasPendingWrites); h.profile(s.exists ? s.data() : null); }, warn('profile')),
           col('plans').onSnapshot((q) => h.plans(q.docs.map((d) => ({ ...d.data(), id: d.id }))), warn('plans')),
           col('overrides').onSnapshot((q) => h.overrides(Object.fromEntries(q.docs.map((d) => [d.id, d.data()]))), warn('overrides')),
-          col('days').onSnapshot((q) => h.days(Object.fromEntries(q.docs.map((d) => [d.id, { ...d.data(), date: d.id }]))), warn('days')),
+          col('days').onSnapshot({ includeMetadataChanges: true }, (q) => { pend('days', q.metadata.hasPendingWrites); h.days(Object.fromEntries(q.docs.map((d) => [d.id, { ...d.data(), date: d.id }]))); }, warn('days')),
           col('targets').onSnapshot((q) => h.targets(Object.fromEntries(q.docs.map((d) => [d.id, d.data()]))), warn('targets')),
           col('awards').onSnapshot((q) => h.awards(q.docs.map((d) => ({ ...d.data(), id: d.id }))), warn('awards')),
           col('config').doc('media').onSnapshot((s) => h.media(s.exists ? s.data() : { slots: {} }), warn('media')),
           col('config').doc('scoring').onSnapshot((s) => h.scoring(s.exists ? s.data() : {}), warn('scoring')),
           col('config').doc('guide').onSnapshot((s) => h.guide(s.exists ? s.data() : { texts: {} }), warn('guide')),
+          ...['quests', 'rewards', 'requests', 'messages', 'tests'].map((n) =>
+            col(n).onSnapshot({ includeMetadataChanges: n === 'requests' || n === 'tests' }, (q) => {
+              if (n === 'requests' || n === 'tests') pend(n, q.metadata.hasPendingWrites);
+              h[n](q.docs.map((d) => ({ ...d.data(), id: d.id })));
+            }, warn(n))),
         ];
         return () => unsubs.forEach((u) => u());
       },
@@ -344,14 +428,40 @@
       async updateProfile(fields) { await root.set(fields, { merge: true }); },
       /** Start again: delete every day and award, zero the profile (plans, targets, media stay). */
       async resetJourney(today, keep) {
-        const docs = [...(await col('days').get()).docs, ...(await col('awards').get()).docs];
+        const docs = (await Promise.all(['days', 'awards', 'tests', 'requests'].map((n) => col(n).get()))).flatMap((q) => q.docs);
         for (let i = 0; i < docs.length; i += 400) {
           const b = db.batch(); docs.slice(i, i + 400).forEach((d) => b.delete(d.ref)); await b.commit();
         }
+        const del = window.firebase.firestore.FieldValue.delete();
+        const qs = (await col('quests').get()).docs.filter((d) => d.data().claimedAt);
+        if (qs.length) { const b = db.batch(); qs.forEach((d) => b.update(d.ref, { claimedAt: del, celebrated: del })); await b.commit(); }
         await root.set({ ...newProfile(today), ...keep, resetAt: Date.now() });
       },
       /** Admin: write (or delete) one day exactly as given. */
       async setDay(date, log) { if (log) await col('days').doc(date).set({ ...log, date }); else await col('days').doc(date).delete(); },
+      /* ---- v6: quests, shop, messages, monthly test ---- */
+      async saveDoc(coll, id, data) { const copy = { ...data }; delete copy.id; const ref = id ? col(coll).doc(id) : col(coll).doc(); await ref.set(copy); return ref.id; },
+      // not awaited by David's phone, so it also works offline (queued by Firestore)
+      patchDoc(coll, id, fields) { return col(coll).doc(id).set(fields, { merge: true }); },
+      async deleteDoc(coll, id) { await col(coll).doc(id).delete(); },
+      /** Mark a finished quest as claimed and add its bonus once (a transaction, so two phones can't double it). */
+      async claimQuest(id, bonus) {
+        return db.runTransaction(async (tx) => {
+          const qs = await tx.get(col('quests').doc(id));
+          if (!qs.exists || qs.data().claimedAt) return false;
+          tx.update(col('quests').doc(id), { claimedAt: Date.now(), celebrated: true });
+          tx.update(root, { score: inc(n0(bonus)) });
+          return true;
+        });
+      },
+      /** The month's test result + its Glory bonus. Works offline too (one doc per month, so no double bonus). */
+      async saveTest(id, doc, bonus) {
+        const ref = col('tests').doc(id);
+        const b = db.batch();
+        b.set(ref, doc);
+        if (n0(bonus)) b.update(root, { score: inc(n0(bonus)) });
+        b.commit().catch((e) => { console.warn('saveTest', e); toast('Could not save the Trial: ' + e.message); });
+      },
       /* ---- David's phone pairing: davidCode/main is secret, davidState/main is public, davids/<uid> = paired phones ---- */
       async davidState(uid) {
         const [st, dv, ad] = await Promise.all([db.collection('davidState').doc('main').get(), db.collection('davids').doc(uid).get(), db.collection('admins').doc(uid).get()]);
@@ -372,11 +482,12 @@
         const coll = async (n) => Object.fromEntries((await col(n).get()).docs.map((d) => [d.id, d.data()]));
         const prof = await root.get();
         return { profile: prof.exists ? prof.data() : null, days: await coll('days'), awards: await coll('awards'), plans: await coll('plans'),
-          overrides: await coll('overrides'), targets: await coll('targets'), config: await coll('config') };
+          overrides: await coll('overrides'), targets: await coll('targets'), config: await coll('config'),
+          quests: await coll('quests'), rewards: await coll('rewards'), requests: await coll('requests'), messages: await coll('messages'), tests: await coll('tests') };
       },
       /** Replace the journey with a backup (Admin restore). */
       async importAll(data) {
-        const names = ['days', 'awards', 'plans', 'overrides', 'targets'];
+        const names = ['days', 'awards', 'plans', 'overrides', 'targets', 'quests', 'rewards', 'requests', 'messages', 'tests'];
         const dels = (await Promise.all(names.map((n) => col(n).get()))).flatMap((q) => q.docs.map((d) => d.ref));
         const sets = [];
         names.forEach((n) => Object.entries(data[n] || {}).forEach(([id, v]) => sets.push([col(n).doc(id), v])));
@@ -398,7 +509,7 @@
 
   /* ============================ VERSION & UPDATES ============================ */
 
-  const APP_VERSION = '5.0';
+  const APP_VERSION = '6.0';
   /** Register the service worker; when a newer version takes over, offer a one-tap update. */
   function watchUpdates() {
     if (!('serviceWorker' in navigator) || !location.protocol.startsWith('http')) return;
@@ -431,6 +542,7 @@
 
   async function start(role) {
     S.role = role;
+    if (role === 'david') applySettings();
     const forceDemo = /[?&]demo\b/.test(location.search);
     try {
       backend = isConfigured() && !forceDemo ? await firebaseBackend() : localBackend();
@@ -497,6 +609,11 @@
           media: (v) => { S.media = { slots: (v && v.slots) || {} }; emit(); },
           scoring: (v) => { S.scoring = E.scoring(v); emit(); },
           guide: (v) => { S.guide = { texts: (v && v.texts) || {} }; emit(); },
+          quests: (v) => { S.quests = v.sort((a, b) => (a.from < b.from ? 1 : -1)); emit(); },
+          rewards: (v) => { S.rewards = v.sort((a, b) => n0(a.cost) - n0(b.cost)); emit(); },
+          requests: (v) => { S.requests = v.sort((a, b) => n0(b.at) - n0(a.at)); emit(); },
+          messages: (v) => { S.messages = v.sort((a, b) => n0(b.at) - n0(a.at)); emit(); },
+          tests: (v) => { S.tests = v.sort((a, b) => (a.id < b.id ? -1 : 1)); emit(); },
         });
         if (role === 'david') backend.ensureProfile(S.today).catch((e) => console.warn('ensureProfile', e));
   }
@@ -514,6 +631,31 @@
     if (S.role !== 'david' || !loaded() || !S.profile || !S.profile.startDate) return;
     if (lastEvalDay !== S.today) { lastEvalDay = S.today; evaluateNow(); }
     queueStoredCelebrations();
+    claimQuests();
+    checkRank();
+  }
+
+  /** Finished quests: add the bonus once and celebrate. */
+  const claiming = new Set();
+  function claimQuests() {
+    S.quests.forEach((q) => {
+      if (q.claimedAt || claiming.has(q.id) || S.today < q.from) return;
+      if (!E.questProgress(q, logsArr()).done) return;
+      claiming.add(q.id);
+      backend.claimQuest(q.id, n0(q.bonus)).then((ok) => {
+        if (ok) enqueue({ type: 'quest', id: 'quest_' + q.id, quest: q });
+      }).catch((e) => { console.warn('claimQuest (will retry)', e); claiming.delete(q.id); });
+    });
+  }
+  /** A new rank: celebrate it once on this journey. */
+  function checkRank() {
+    const p = S.profile, r = rank();
+    if (!p || queued.has('rank_' + r.idx)) return;
+    if (r.idx > n0(p.rankSeen)) {
+      queued.add('rank_' + r.idx);
+      enqueue({ type: 'rank', id: 'rank_' + r.idx, idx: r.idx });
+      backend.updateProfileNow({ rankSeen: r.idx });
+    }
   }
 
   async function evaluateNow() {
@@ -554,8 +696,44 @@
     const logs = { ...S.logs };
     if (log) logs[date] = { ...log, date }; else delete logs[date];
     const p = E.recomputeProfile(startDate(), S.today, logs, planForDate);
+    p.score += bonusTotal();
     await backend.updateProfile(p);
     return p;
+  }
+  /**
+   * Admin: rebuild the score after a bonus changed. adj = { quest: {id, bonus|null}, test: {id, bonus|null} }
+   * says what the just-saved/deleted doc is now (the live list may not have caught up yet).
+   */
+  async function adminRecompute(adj = {}) {
+    const qs = S.quests.filter((q) => q.claimedAt).map((q) => [q.id, n0(q.bonus)]);
+    const ts = S.tests.map((t) => [t.id, n0(t.bonus)]);
+    const fix = (arr, a) => { if (!a) return arr; const o = arr.filter(([id]) => id !== a.id); if (a.bonus != null) o.push([a.id, n0(a.bonus)]); return o; };
+    const bonus = E.sum(fix(qs, adj.quest), (x) => x[1]) + E.sum(fix(ts, adj.test), (x) => x[1]);
+    const p = E.recomputeProfile(startDate(), S.today, S.logs, planForDate);
+    p.score += bonus;
+    await backend.updateProfile(p);
+  }
+
+  /* ------------------------------- v6 actions ------------------------------- */
+
+  /** David asks for a reward from the shop (the Glory is reserved until the Council decides). */
+  async function requestReward(rw) {
+    if (treasury() < n0(rw.cost)) { toast('Not enough Glory in your treasury yet'); return false; }
+    await backend.saveDoc('requests', null, { rewardId: rw.id, title: rw.title, emoji: rw.emoji || '', cost: n0(rw.cost), at: Date.now(), status: 'PENDING' });
+    toast('Request sent to the Council');
+    return true;
+  }
+  function reactMessage(id, reaction) { backend.patchDoc('messages', id, { reaction }).catch((e) => toast('Could not save: ' + e.message)); }
+  function markMessageRead(id) { backend.patchDoc('messages', id, { readAt: Date.now() }).catch(() => {}); }
+  /** Save this month's Trial of Heracles. results: { PUSH_UPS: 34, PLANK: 95, … } */
+  function saveTest(results) {
+    const id = E.testId(S.today);
+    if (thisTest()) { toast('This month\'s Trial is already done'); return false; }
+    const prev = S.tests.filter((t) => t.id < id).slice(-1)[0] || null;
+    const bonus = n0(S.scoring.testBonus);
+    Promise.resolve(backend.saveTest(id, { date: S.today, results, at: Date.now(), bonus }, bonus)).catch((e) => toast(e.message));
+    enqueue({ type: 'test', id: 'test_' + id, results, prev, bonus });
+    return true;
   }
   /** Admin: a closed-day record built from the given entries (same formula as David's close). */
   function adminDoneLog(date, entries) {
@@ -1015,6 +1193,182 @@
     return `<div class="card">${section('Personal records')}${rows}</div>`;
   }
 
+  /* ============================== v6 cards ============================== */
+
+  /** Rank badge: the Admin's picture (media/rank_<id>) or a drawn laurel shield with the rank number. */
+  function rankBadgeHTML(idx, size) {
+    const r = E.RANKS[idx], url = mediaURL('rank_' + r.id);
+    if (url) return `<span class="art" style="width:${size}px;height:${size}px"><img src="${esc(url)}" alt="${esc(r.title)}"></span>`;
+    return `<svg class="rank-badge" width="${size}" height="${size}" viewBox="0 0 100 100" aria-label="${esc(r.title)}">
+      <circle cx="50" cy="50" r="46" fill="${r.color}" stroke="${C.gold}" stroke-width="3"/>
+      ${laurelLeaves(50, 52, 34, C.goldLight, 7, 0.9)}
+      <text x="50" y="61" text-anchor="middle" font-family="Cinzel, Georgia, serif" font-weight="700" font-size="30" fill="${C.goldLight}">${E.roman(idx + 1)}</text></svg>`;
+  }
+  /** Avatar inside a frame that shows David's rank (media/frame_<rank id> overlays it when present). */
+  function avatarFramed(p, size) {
+    const r = rank(), url = mediaURL('frame_' + r.rank.id);
+    return `<span class="av-frame r${r.idx}" style="--rc:${r.rank.color};width:${size}px;height:${size}px">${avatarHTML(p, size)}${url ? `<img class="frame-img" src="${esc(url)}" alt="">` : ''}</span>`;
+  }
+  /** Home: rank line under the Glory number. */
+  function rankLineHTML() {
+    const r = rank();
+    return `<span class="rank-name" style="--rc:${r.rank.color}" title="${r.next ? fmtNum(r.next.min - n0(profile().score)) + ' to ' + esc(r.next.title) : ''}">${esc(r.rank.title)}</span>`;
+  }
+  /** Hall: the ladder of ranks. */
+  function ranksCard() {
+    const r = rank();
+    const rows = E.RANKS.map((x, i) => `<div class="rank-row ${i <= r.idx ? 'got' : ''} ${i === r.idx ? 'now' : ''}">${rankBadgeHTML(i, 48)}<div class="grow"><b>${esc(x.title)}</b>
+      <div class="muted small">${i === 0 ? 'Where every hero begins' : fmtNum(x.min) + ' Glory'}</div>${i === r.idx + 1 ? bar(r.frac, false, 'thin') : ''}</div>${i === r.idx ? '<span class="tag active">YOU</span>' : i < r.idx ? '<span class="ok">✓</span>' : ''}</div>`).join('');
+    return `<div class="card">${section('Ranks')}${rows}</div>`;
+  }
+
+  /** Quests for David's home: active ones, upcoming ones, and those finished in the last 3 days. */
+  function questsCard() {
+    const la = logsArr();
+    const show = S.quests.filter((q) => {
+      const st = E.questState(q, S.today, la);
+      return st === 'active' || st === 'upcoming' || (st === 'done' && q.to >= E.addDays(S.today, -3));
+    }).sort((a, b) => (a.to < b.to ? -1 : 1));
+    if (!show.length) return '';
+    const rows = show.map((q) => {
+      const st = E.questState(q, S.today, la), pr = E.questProgress(q, la);
+      const left = E.diffDays(S.today, q.to) + 1;
+      const timedReps = q.kind === 'reps' && E.isTimed(q.exercise);
+      const nums = timedReps ? `${E.fmtSecs(pr.have)} / ${E.fmtSecs(pr.goal)}` : `${fmtNum(pr.have)} / ${fmtNum(pr.goal)}`;
+      const when = st === 'upcoming' ? `starts ${fmtDate(q.from, 'day')}` : st === 'done' ? 'complete ✓' : `${left} day${left === 1 ? '' : 's'} left`;
+      return `<div class="quest ${st}"><div class="row"><b class="grow">${esc(q.title || E.questGoalText(q))}</b>${n0(q.bonus) ? `<span class="q-bonus">+${fmtNum(q.bonus)}</span>` : ''}</div>
+        <div class="muted small">${esc(E.questGoalText(q))} · ${when}</div>${bar(pr.frac, st === 'upcoming')}<div class="q-nums">${nums}</div></div>`;
+    }).join('');
+    return `<div class="card">${section('Quests')}${rows}</div>`;
+  }
+
+  /** Home: the treasury (Glory to spend) and a button to the shop. */
+  function treasuryCard() {
+    if (!S.rewards.some((r) => r.active !== false)) return '';
+    const pend = S.requests.filter((r) => r.status === 'PENDING').length;
+    return `<div class="card treasury" data-act="tab" data-tab="shop"><div class="row"><span class="t-coin">◎</span><div class="grow"><div class="eyebrow-dark">TREASURY</div>
+      <b class="t-sum">${fmtNum(treasury())} Glory</b><div class="muted small">${pend ? `${pend} request${pend === 1 ? '' : 's'} waiting for the Council` : 'Spend your Glory on real rewards'}</div></div><span class="t-go">Shop ›</span></div></div>`;
+  }
+
+  const REACTIONS = ['🔥', '💪', '👍', '❤️', '🙏'];
+  /** Home: the newest message from the Council, with reaction buttons. */
+  function messageCard() {
+    const m = S.messages[0];
+    if (!m || E.diffDays(new Date(n0(m.at)).toISOString().slice(0, 10), S.today) > 14) return '';
+    const more = S.messages.length > 1 ? `<button class="btn-text" data-act="msgs-all">Older messages (${S.messages.length - 1})</button>` : '';
+    return `<div class="card message"><div class="eyebrow-dark">📜 FROM THE COUNCIL · ${esc(fmtMillis(m.at))}</div><p class="msg-text">${esc(m.text)}</p>
+      <div class="reactions">${REACTIONS.map((r) => `<button class="${m.reaction === r ? 'on' : ''}" data-act="react" data-id="${m.id}" data-r="${r}">${r}</button>`).join('')}</div>${more}</div>`;
+  }
+  function messagesListHTML() {
+    return `<h3>Messages from the Council</h3>${S.messages.map((m) => `<div class="msg-old"><div class="muted tiny">${esc(fmtMillis(m.at))}${m.reaction ? ' · ' + m.reaction : ''}</div><p>${esc(m.text)}</p></div>`).join('')}`;
+  }
+
+  /** Home: this month's Trial of Heracles. */
+  function testHomeCard() {
+    const done = thisTest();
+    const [y, m] = S.today.split('-').map(Number);
+    const nextMonth = MONTHS_LONG[m % 12];
+    if (done) return `<div class="card test-card done"><div class="row"><span class="t-ico">Ⅻ</span><div class="grow"><b>Trial of Heracles done</b><div class="muted small">The next one opens on 1 ${nextMonth}.</div></div><button class="btn-text" data-act="tab" data-tab="chronicle">Results</button></div></div>`;
+    return `<div class="card test-card"><div class="row"><span class="t-ico">Ⅻ</span><div class="grow"><b>The Trial of Heracles is open</b><div class="muted small">Once a month: test your strength. ${n0(S.scoring.testBonus) ? `+${fmtNum(S.scoring.testBonus)} Glory.` : ''}</div></div></div>
+      <button class="btn-gold" data-act="tab" data-tab="test" style="margin-top:10px">Take the Trial</button></div>`;
+  }
+
+  /** Chronicle / Admin: the monthly test results over time. */
+  function testsCard() {
+    if (!S.tests.length) return '';
+    const months = S.tests.map((t) => t.id);
+    const label = (id) => { const [y, m] = id.split('-').map(Number); return `${MONTHS[m - 1]} ${String(y).slice(2)}`; };
+    const colors = [C.bronze, C.aegean, C.laurel, C.lost];
+    const reps = E.TESTS.filter((t) => t.mode !== 'hold' && S.tests.some((x) => E.testValue(x, t.id)));
+    const hold = E.TESTS.find((t) => t.mode === 'hold');
+    let html = `<div class="card">${section('Trial of Heracles · monthly tests')}`;
+    if (reps.length) html += lineChartSVG(reps.map((t, i) => ({ label: t.title, values: S.tests.map((x) => E.testValue(x, t.id) || null), color: colors[i % colors.length] })), months.map(label), 170);
+    if (S.tests.some((x) => E.testValue(x, hold.id))) html += lineChartSVG([{ label: hold.title + ' (seconds)', values: S.tests.map((x) => E.testValue(x, hold.id) || null), color: C.gold }], months.map(label), 140);
+    const head = `<tr><th></th>${E.TESTS.map((t) => `<th>${esc(E.EX[t.id].name.split(' ')[0])}</th>`).join('')}</tr>`;
+    const rows = S.tests.slice().reverse().map((x) => `<tr><td>${label(x.id)}</td>${E.TESTS.map((t) => `<td>${E.testValue(x, t.id) ? (t.mode === 'hold' ? E.fmtSecs(E.testValue(x, t.id)) : E.testValue(x, t.id)) : '–'}</td>`).join('')}</tr>`).join('');
+    return html + `<table class="cmp tests-tbl">${head}${rows}</table></div>`;
+  }
+
+  /** Admin: closed share per weekday, so you can see which day he skips most. */
+  function weekdayCard() {
+    const rows = E.weekdayStats(startDate(), S.today, S.logs, planForDate);
+    const rated = rows.filter((r) => r.planned >= 2);
+    const worst = rated.length ? rated.reduce((a, b) => (b.rate < a.rate ? b : a)) : null;
+    const html = rows.map((r) => `<div class="wd-row ${worst && r === worst && r.rate < 1 ? 'worst' : ''}"><span class="wd">${r.dow.slice(0, 3)}</span>
+      <div class="grow">${bar(r.rate == null ? 0 : r.rate)}</div><span class="wd-n">${r.rate == null ? '–' : Math.round(r.rate * 100) + '%'}</span><span class="muted tiny wd-d">${r.closed}/${r.planned}${r.skipped ? ` · ${r.skipped} skip` : ''}</span></div>`).join('');
+    return `<div class="card">${section('Consistency by weekday')}${html}
+      <p class="muted small">${worst && worst.rate < 1 ? `Most skipped: <b>${DAYS_LONG[E.DOW.indexOf(worst.dow)]}</b> — maybe make that day lighter.` : 'Share of planned days that were closed, per weekday (from the start until yesterday).'}</p></div>`;
+  }
+
+  /** Admin: the last 53 weeks as a grid of small squares (GitHub style). */
+  function heatmapCard() {
+    const end = S.today, startMon = E.addDays(E.mondayOf(end), -52 * 7);
+    let cols = '';
+    for (let w = 0; w < 53; w++) {
+      let cells = '';
+      for (let i = 0; i < 7; i++) {
+        const d = E.addDays(startMon, w * 7 + i);
+        if (d > end) { cells += '<i class="hm none"></i>'; continue; }
+        const mk = markFor(d);
+        const lvl = mk === 'done' ? 'l4' : mk === 'incomplete' ? (n0(S.logs[d].pct) >= 60 ? 'l3' : 'l2') : mk === 'skipped' ? 'sk' : mk === 'excused' ? 'ex' : 'l0';
+        cells += `<i class="hm ${lvl}" title="${d}"></i>`;
+      }
+      cols += `<div class="hm-col">${cells}</div>`;
+    }
+    return `<div class="card">${section('The year at a glance')}<div class="heatmap">${cols}</div>
+      <div class="legend"><span class="lg"><i class="hm l4"></i>Completed</span><span class="lg"><i class="hm l3"></i>60–99%</span><span class="lg"><i class="hm l2"></i>under 60%</span><span class="lg"><i class="hm sk"></i>Skipped</span><span class="lg"><i class="hm ex"></i>Excused</span></div></div>`;
+  }
+
+  /** A printable monthly report (the Admin saves it as PDF from the print dialog). month = "YYYY-MM" */
+  function reportHTML(month) {
+    const [y, m] = month.split('-').map(Number);
+    const from = `${month}-01`, to = E.addDays(new Date(Date.UTC(y, m, 1)).toISOString().slice(0, 10), -1);
+    const inM = logsArr().filter((l) => l.date >= from && l.date <= to);
+    const t = E.totals(inM, [from, to]);
+    const excused = inM.filter((l) => l.status === 'EXCUSED').length;
+    const before = E.records(logsArr().filter((l) => l.date < from));
+    const recs = [];
+    inM.filter((l) => l.status === 'DONE').sort((a, b) => (a.date < b.date ? -1 : 1)).forEach((l) => {
+      E.newRecords(before, l.entries).forEach((x) => recs.push({ ...x, date: l.date }));
+      E.logEntries(l).forEach((e) => {
+        const b = before[e.exercise] || (before[e.exercise] = { bestSet: 0, bestDay: 0 });
+        b.bestSet = Math.max(b.bestSet, ...E.setList(e)); b.bestDay = Math.max(b.bestDay, E.volume(e));
+      });
+    });
+    const byEx = E.EXERCISES.map((x) => {
+      const es = inM.filter((l) => l.status === 'DONE').flatMap((l) => E.logEntries(l).filter((e) => e.exercise === x.id));
+      return es.length ? `<tr><td>${esc(x.name)}</td><td>${es.length}</td><td>${E.isTimed(x.id) ? E.fmtSecs(E.sum(es, E.volume)) : fmtNum(E.sum(es, E.volume)) + ' ' + x.unit}</td><td>${fmtNum(Math.round(E.sum(es, (e) => E.exercisePoints(e, S.scoring))))}</td></tr>` : '';
+    }).join('');
+    const quests = S.quests.filter((q) => q.to >= from && q.from <= to);
+    const test = S.tests.find((x) => x.id === month);
+    const p = profile();
+    let cal = '';
+    const len = E.diffDays(from, to) + 1, lead = E.DOW.indexOf(E.dowOf(from));
+    for (let i = 0; i < lead; i++) cal += '<span></span>';
+    for (let i = 0; i < len; i++) { const d = E.addDays(from, i); cal += `<span class="rc ${markFor(d)}">${i + 1}</span>`; }
+    const st = (l, v) => `<div class="stat"><b>${v}</b><span>${l}</span></div>`;
+    return `<div class="report"><div class="rp-head">${laurelSVG(54, C.gold)}<div><h1>Path to Olympus</h1><div>Monthly report · ${MONTHS_LONG[m - 1]} ${y} · ${esc(p.name)}</div></div></div>
+      <div class="stats">${st('Completed', t.completeDays)}${st('Incomplete', t.days - t.completeDays)}${st('Skipped', t.skipped)}${st('Excused', excused)}</div>
+      <div class="stats">${st('Points', fmtNum(t.points))}${st('Timed min', fmtNum(Math.round(t.minutes)))}${st('Reps', fmtNum(t.reps))}${st('Avg level', t.avgLevel ? t.avgLevel.toFixed(1) : '–')}</div>
+      <p>Closed ${t.days} of ${t.judged} judged days (${t.judged ? Math.round((t.days * 100) / t.judged) : 0}%). Points vs plan: ${fmtNum(t.points)} / ${fmtNum(t.planned)}. Glory now ${fmtNum(p.score)} · rank ${esc(rank().rank.title)} · best streak ${n0(p.bestStreak)}.</p>
+      <h2>Calendar</h2><div class="rp-cal">${['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((x) => `<b>${x}</b>`).join('')}${cal}</div>
+      ${byEx ? `<h2>Exercises</h2><table class="cmp"><tr><th>Exercise</th><th>Days</th><th>Total</th><th>Points</th></tr>${byEx}</table>` : ''}
+      ${recs.length ? `<h2>Personal records</h2><ul>${recs.map((x) => `<li>${fmtDate(x.date, 'dm')} · ${esc(E.EX[x.exercise].name)} — ${x.kind === 'set' ? 'best set' : 'best day'} ${E.isTimed(x.exercise) ? E.fmtSecs(x.value) : x.value} (was ${E.isTimed(x.exercise) ? E.fmtSecs(x.was) : x.was})</li>`).join('')}</ul>` : ''}
+      ${quests.length ? `<h2>Quests</h2><ul>${quests.map((q) => { const pr = E.questProgress(q, logsArr()); return `<li>${esc(q.title || E.questGoalText(q))} — ${q.claimedAt || pr.done ? 'completed ✓' : `${fmtNum(pr.have)} / ${fmtNum(pr.goal)}`}</li>`; }).join('')}</ul>` : ''}
+      ${test ? `<h2>Trial of Heracles</h2><ul>${E.TESTS.filter((x) => E.testValue(test, x.id)).map((x) => `<li>${esc(x.title)}: ${x.mode === 'hold' ? E.fmtSecs(E.testValue(test, x.id)) : E.testValue(test, x.id)}</li>`).join('')}</ul>` : ''}
+      <p class="rp-foot">“The road is mastered by the one who walks it.” · printed ${fmtDate(S.today)}</p></div>`;
+  }
+
+  /** How-to card for an exercise level: picture/GIF, what the level means, form tips. */
+  function howToHTML(exId, level) {
+    const info = E.EX[exId];
+    const tips = guideText('tips_' + exId).split('\n').map((s) => s.trim()).filter(Boolean);
+    return `<h3>${esc(info.name)} · ${E.lvl(level).label}</h3>${exerciseMediaHTML(exId, level)}
+      <p>${esc(guideText(E.guideExKey(exId, level)))}</p><div class="muted small">${esc(info.focus)}</div>
+      ${tips.length ? `<h4 style="margin:12px 0 4px">Good form</h4><ul class="tips">${tips.map((t) => `<li>${esc(t)}</li>`).join('')}</ul>` : ''}
+      <div class="levels-mini">${[1, 2, 3].map((l) => `<button class="${l === level ? 'on' : ''}" data-act="howto" data-ex="${exId}" data-lv="${l}">${E.lvl(l).roman}</button>`).join('')}</div>`;
+  }
+
   /** done (completed) · incomplete · skipped · today · planned · empty · before */
   function markFor(d) {
     const log = S.logs[d];
@@ -1216,6 +1570,29 @@
       document.body.appendChild(el);
       return;
     }
+    if (c.type === 'quest' || c.type === 'rank' || c.type === 'test') {
+      let body;
+      if (c.type === 'quest') {
+        body = `<div class="eyebrow">QUEST COMPLETE</div><div class="pop record-pop">${laurelSVG(150, C.gold)}<b>⚔</b></div>
+          <h2>${esc(c.quest.title || 'Quest complete')}</h2><p>${esc(E.questGoalText(c.quest))} — done!</p>${n0(c.quest.bonus) ? `<p class="bonus-line">+${fmtNum(c.quest.bonus)} Glory</p>` : ''}`;
+      } else if (c.type === 'rank') {
+        const r = E.RANKS[c.idx], next = E.RANKS[c.idx + 1];
+        body = `<div class="eyebrow">NEW RANK</div><div class="pop rank-pop">${rankBadgeHTML(c.idx, 170)}</div>
+          <h2>You are now a ${esc(r.title)}</h2><p>${fmtNum(r.min)} Glory earned on the road.</p>${next ? `<p class="muted-light">Next: ${esc(next.title)} at ${fmtNum(next.min)} Glory</p>` : '<p class="muted-light">The highest rank. Olympus is yours.</p>'}`;
+      } else {
+        const rows = E.TESTS.filter((t) => n0(c.results[t.id])).map((t) => {
+          const v = n0(c.results[t.id]), was = E.testValue(c.prev, t.id), f = (x) => (t.mode === 'hold' ? E.fmtSecs(x) : x);
+          return `<li><b>${esc(t.title)}</b>: <b>${f(v)}</b>${was ? ` <span class="was">(${v > was ? '▲' : v < was ? '▼' : '='} last time ${f(was)})</span>` : ''}</li>`;
+        }).join('');
+        body = `<div class="eyebrow">TRIAL OF HERACLES</div><div class="pop record-pop">${laurelSVG(150, C.gold)}<b>Ⅻ</b></div>
+          <h2>The Trial is written in the Chronicle</h2><ul class="rec-list">${rows}</ul>${c.bonus ? `<p class="bonus-line">+${fmtNum(c.bonus)} Glory</p>` : ''}`;
+      }
+      el.className = 'cel medal-reveal';
+      el.innerHTML = `<div class="mr">${body}<button class="btn-gold" data-x="done">Continue</button></div>`;
+      el.querySelector('[data-x="done"]').onclick = done;
+      document.body.appendChild(el);
+      return;
+    }
     if (c.type === 'medal' && !c.artReady) {
       // make sure the uploaded medal picture is known before showing it
       whenMedia('medal_' + c.award.id).then(() => { queue.unshift({ ...c, artReady: true }); showNext(); });
@@ -1261,6 +1638,7 @@
     v.onended = finish;
     pickVideo([c.key, c.fallback]).then((src) => {
       v.src = src;
+      if (!settings().sound) v.muted = true;
       v.play().catch(() => {
         v.muted = true;
         v.play().then(() => {
@@ -1288,6 +1666,8 @@
     if (t != null && String(t).trim() !== '') return String(t);
     const sec = E.GUIDE_SECTIONS.find((x) => x[0] === key);
     if (sec) return sec[2];
+    if (key === 'warmup') return E.WARMUP_DEFAULT;
+    if (key.startsWith('tips_')) return E.EX_TIPS[key.slice(5)] || '';
     const m = key.match(/^ex_([A-Z_]+)_(\d)$/);
     return m && E.EX[m[1]] ? E.EX[m[1]].levels[m[2]] : '';
   }
@@ -1317,6 +1697,8 @@
     profile, planForDate, startDate, todayPlan, todayLog, todayClosed, todayEntries, todayRows, todayStats, baseline, planTarget, ghost, target, currentBlock, week, earnedIds,
     updateEntry, addExtra, removeExtra, closeToday, photoToDataURL, saveAvatarPhoto, adminOp, PIN, ADMIN, toast,
     APP_VERSION, watchUpdates, versionHTML, homeGoalsCard, recordsCard, adminSaveDay, adminDoneLog, backupNow, downloadJSON, pairDevice, davidCodeHash, refreshDavid,
+    logsArr, bonusTotal, spent, treasury, rank, thisTest, syncHTML, settings, setSetting, applySettings, beep, adminRecompute, requestReward, reactMessage, markMessageRead, saveTest,
+    rankBadgeHTML, avatarFramed, rankLineHTML, ranksCard, questsCard, treasuryCard, messageCard, messagesListHTML, testHomeCard, testsCard, weekdayCard, heatmapCard, reportHTML, howToHTML, REACTIONS,
     backend: () => backend,
     laurelSVG, avatarHTML, medalSVG, coatSVG, emblemSVG, lineChartSVG, rawUrl, mediaURL, awardArt, targetLine,
     bar, labeled, section, videoURL, videoFile, levelBadge, setsEditorHTML, setsEdit, horizonsCard, calendarCard, dayDetailHTML, totalsCard, trendsCard, trajectoryCard, exerciseMediaHTML, exerciseMediaURL, guideText,
