@@ -138,6 +138,7 @@
     perMinute: 1,     // points per minute of training
     penalty: 50,      // points lost for a skipped day
     completeAt: 100,  // % of planned points needed for a "Completed" day
+    testBonus: 100,   // Glory for finishing the monthly Trial of Heracles
   };
   function scoring(sc) {
     sc = sc || {};
@@ -518,6 +519,165 @@
     return { id: awardId(h, idx), title: h.repeats ? `${h.coat} ${roman(n)}` : h.coat, subtitle: sub, kind: 'COAT_OF_ARMS', horizon: h.id, earnedAt: now, celebrated: false };
   }
 
+  /* ================================ v6 ================================ */
+
+  /* ---------------------------------- ranks ---------------------------------- */
+
+  /** Ranks by Glory. ~200 points a day ≈ Warrior after 2 months, Hero after a year, Olympian near the end of the road. */
+  const RANKS = [
+    { id: 'mortal', title: 'Mortal', min: 0, color: '#9C907D' },
+    { id: 'recruit', title: 'Recruit', min: 2000, color: '#A8692F' },
+    { id: 'warrior', title: 'Warrior', min: 10000, color: '#8E2A24' },
+    { id: 'champion', title: 'Champion', min: 30000, color: '#27496D' },
+    { id: 'hero', title: 'Hero', min: 75000, color: '#5B7A3A' },
+    { id: 'demigod', title: 'Demigod', min: 180000, color: '#5B2A6E' },
+    { id: 'titan', title: 'Titan', min: 350000, color: '#2A1F14' },
+    { id: 'olympian', title: 'Olympian', min: 600000, color: '#C9A227' },
+  ];
+  /** { idx, rank, next, frac } — frac = progress from this rank to the next (1 at the top). */
+  function rankOf(score) {
+    const s = num(score);
+    let idx = 0;
+    RANKS.forEach((r, i) => { if (s >= r.min) idx = i; });
+    const rank = RANKS[idx], next = RANKS[idx + 1] || null;
+    const frac = next ? Math.max(0, Math.min(1, (s - rank.min) / (next.min - rank.min))) : 1;
+    return { idx, rank, next, frac };
+  }
+
+  /* --------------------------------- quests --------------------------------- */
+
+  /** What a quest counts inside its dates. */
+  const QUEST_KINDS = [
+    { id: 'reps', label: 'Reps / seconds of one exercise' },
+    { id: 'days', label: 'Days closed' },
+    { id: 'complete', label: 'Completed (100%) days' },
+    { id: 'points', label: 'Points' },
+    { id: 'minutes', label: 'Timed minutes' },
+  ];
+  /** Progress of a quest from the closed days in [from, to]: { have, goal, frac, done }. */
+  function questProgress(q, logsArr) {
+    const done = (logsArr || []).filter((l) => l.status === 'DONE' && l.date >= q.from && l.date <= q.to);
+    let have = 0;
+    if (q.kind === 'reps') have = sum(done, (l) => sum(logEntries(l).filter((e) => e.exercise === q.exercise), volume));
+    else if (q.kind === 'days') have = done.length;
+    else if (q.kind === 'complete') have = done.filter((l) => l.complete !== false).length;
+    else if (q.kind === 'points') have = sum(done, (l) => num(l.points));
+    else if (q.kind === 'minutes') have = Math.floor(sum(done, logMinutes));
+    const goal = Math.max(1, num(q.goal));
+    return { have, goal, frac: Math.min(1, have / goal), done: have >= goal };
+  }
+  /** "150 push-ups", "5 days closed", "10 min of timed exercise"… */
+  function questGoalText(q) {
+    const g = num(q.goal);
+    if (q.kind === 'reps') {
+      const info = EX[q.exercise] || { name: q.exercise, unit: 'reps' };
+      return isTimed(q.exercise) ? `${fmtSecs(g)} of ${info.name.toLowerCase()}` : `${g} ${info.unit === 'reps' ? info.name.toLowerCase() : info.unit + ' of ' + info.name.toLowerCase()}`;
+    }
+    return { days: `${g} day${g === 1 ? '' : 's'} closed`, complete: `${g} completed day${g === 1 ? '' : 's'}`, points: `${g} points`, minutes: `${g} min of timed exercise` }[q.kind] || String(g);
+  }
+  /** upcoming | active | done | missed */
+  function questState(q, today, logsArr) {
+    if (q.claimedAt) return 'done';
+    if (today < q.from) return 'upcoming';
+    if (questProgress(q, logsArr).done) return 'done';
+    return today > q.to ? 'missed' : 'active';
+  }
+
+  /* ------------------------ monthly Trial of Heracles ------------------------ */
+
+  const TESTS = [
+    { id: 'PUSH_UPS', title: 'Push-ups in one minute', mode: 'count60', how: 'Full push-ups, as many as you can in 60 seconds. Rest at the top if you must, but the clock keeps running.' },
+    { id: 'PULL_UPS', title: 'Most pull-ups', mode: 'max', how: 'Strict pull-ups from a full hang, chin over the bar. One set, until you cannot do another.' },
+    { id: 'PLANK', title: 'Longest plank', mode: 'hold', how: 'Forearm plank, body in one straight line. Start the clock, stop it when your hips drop.' },
+    { id: 'ABS', title: 'Sit-ups in one minute', mode: 'count60', how: 'Full sit-ups, as many as you can in 60 seconds.' },
+  ];
+  const testId = (date) => date.slice(0, 7); // one test per calendar month: "2026-11"
+  const testValue = (t, id) => num(t && t.results && t.results[id]);
+
+  /* ---------------------------- smart progression ---------------------------- */
+
+  /**
+   * For each exercise in the coming week's plan: if David reached the planned volume at the planned
+   * level the last `need` times it was planned, suggest more (+1 rep per set / +time, or the next level).
+   * Returns [{ exercise, level, from:[…], to:[…], newLevel, hits, key }].
+   */
+  function progressionSuggestions(today, logs, planForFn, need = 3) {
+    const upcoming = {};
+    for (let i = 0; i < 7; i++) {
+      const p = planForFn(addDays(today, i));
+      ((p && p.exercises) || []).forEach((x) => { if (!upcoming[x.exercise]) upcoming[x.exercise] = x; });
+    }
+    const out = [];
+    Object.values(upcoming).forEach((x) => {
+      const target = setList(planEntry(x)), lv = x.level || 1, tv = sum(target, (v) => v);
+      if (!target.length) return;
+      const hits = [];
+      for (let d = today, g = 0; g < 90 && hits.length < need; g++, d = addDays(d, -1)) {
+        const l = logs[d];
+        if (d === today && !(l && l.status === 'DONE')) continue;
+        const plan = (l && l.plan) || planForFn(d);
+        const px = plan && (plan.exercises || []).find((y) => y.exercise === x.exercise);
+        if (!px) continue;
+        const e = l && l.status === 'DONE' ? logEntries(l).find((y) => y.exercise === x.exercise) : null;
+        if (l && l.status === 'EXCUSED') continue;
+        const pv = sum(setList(planEntry(px)), (v) => v);
+        hits.push(!!e && num(e.level) >= (px.level || 1) && volume(e) >= pv ? volume(e) / Math.max(1, pv) : 0);
+      }
+      if (hits.length < need || hits.some((h) => !h)) return;
+      const info = EX[x.exercise], timed = isTimed(x.exercise);
+      const top = Math.max(...target);
+      const ready = timed ? top >= 120 : top >= (x.exercise === 'SWIMMING' ? 10 : 15);
+      let to, newLevel = lv;
+      if (ready && lv < 3) {
+        newLevel = lv + 1;
+        to = target.map((v) => (timed ? Math.max(info.step, Math.round((v * 0.6) / info.step) * info.step) : Math.max(3, Math.round(v * 0.6))));
+      } else {
+        const big = Math.min(...hits) >= 1.25;
+        const add = timed ? info.step * (x.exercise === 'PLANK' ? 2 : 1) * (big ? 2 : 1) : big ? 2 : 1;
+        to = target.map((v) => v + add);
+      }
+      out.push({ exercise: x.exercise, level: lv, from: target, to, newLevel, hits: hits.length, key: `${x.exercise}:${lv}:${target.join('-')}` });
+    });
+    return out;
+  }
+
+  /* ---------------------------- weekday consistency ---------------------------- */
+
+  /** Per weekday (Mon…Sun): planned days, closed, skipped, excused — from the start up to yesterday. */
+  function weekdayStats(start, today, logs, planForFn) {
+    const rows = DOW.map((d) => ({ dow: d, planned: 0, closed: 0, skipped: 0, excused: 0, extra: 0 }));
+    for (let d = start, g = 0; d < today && g < 5000; d = addDays(d, 1), g++) {
+      const l = logs[d], st = l && l.status, r = rows[DOW.indexOf(dowOf(d))];
+      const planned = !isRest((l && l.plan) || planForFn(d));
+      if (st === 'EXCUSED') { r.excused++; continue; }
+      if (st === 'DONE') { if (planned) { r.planned++; r.closed++; } else r.extra++; continue; }
+      if (planned) { r.planned++; r.skipped++; }
+    }
+    rows.forEach((r) => { r.rate = r.planned ? r.closed / r.planned : null; });
+    return rows;
+  }
+
+  /* ------------------------------ exercise guide ------------------------------ */
+
+  const EX_TIPS = {
+    PULL_UPS: 'Start from a full hang, arms straight\nPull your shoulders down and back first\nChin over the bar, no kicking or swinging\nLower slowly — the way down builds strength too',
+    PUSH_UPS: 'Hands under the shoulders, fingers forward\nBody in one straight line from head to heels\nChest almost touches the floor\nElbows about 45° from the body, not flared out',
+    PLANK: 'Elbows under the shoulders\nSqueeze your belly and your bottom\nDon\'t let the hips sag or rise\nBreathe slowly — don\'t hold your breath',
+    JUMP_ROPE: 'Small jumps, on the balls of your feet\nTurn the rope with the wrists, not the arms\nElbows close to the body\nLook ahead, not at your feet',
+    DIPS: 'Shoulders down, away from the ears\nLower until the elbows reach 90°\nLean slightly forward\nPush up until the arms are straight',
+    AB_WHEEL: 'Start on the knees, back rounded slightly\nRoll out only as far as you can control\nNever let the lower back sag\nPull back with the belly, not the arms',
+    ABS: 'Feet flat, knees bent\nDon\'t pull on your neck\nCurl up with the belly muscles\nGo down slowly',
+    SWIMMING: 'Long, smooth strokes\nBreathe out under the water\nKeep the body flat and high in the water\nRest at the wall when you need it',
+  };
+  const WARMUP_DEFAULT = 'Jumping jacks — 45\nArm circles, forward and back — 30\nShoulder rolls and wrist circles — 30\nBodyweight squats — 45\nHip circles and leg swings — 45\nInchworm walk-outs — 45\nEasy plank — 30';
+  /** "Jumping jacks — 45" lines → [{ name, secs }] (default 40 s when no number). */
+  function parseWarmup(text) {
+    return String(text || '').split('\n').map((s) => s.trim()).filter(Boolean).map((s) => {
+      const m = s.match(/^(.*?)[\s—–\-:|]+(\d{1,3})\s*s?$/);
+      return m ? { name: m[1].trim(), secs: Math.max(5, +m[2]) } : { name: s, secs: 40 };
+    });
+  }
+
   /* -------------------------------- exports -------------------------------- */
 
   const Engine = {
@@ -529,6 +689,8 @@
     dayStats, streakEndingAt, closeDay, evaluate,
     blockIndex, blockRange, totals, baseline, planTarget, ghostProposal, hasMax, isEmptyTarget, meets, awardId, newlyAchieved, progress, round1,
     MEDALS, newlyEarned, nextMedal, recomputeProfile, records, newRecords, sum, medalAward, milestoneAward, roman,
+    RANKS, rankOf, QUEST_KINDS, questProgress, questGoalText, questState, TESTS, testId, testValue,
+    progressionSuggestions, weekdayStats, EX_TIPS, WARMUP_DEFAULT, parseWarmup,
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = Engine;
   else root.Engine = Engine;
