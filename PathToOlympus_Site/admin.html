@@ -397,9 +397,8 @@
         + slot('guide_warmup', 'Warm-up picture (shown during the warm-up)', 'image or GIF, ~1080 wide')
         + E.GUIDE_SECTIONS.map(([id, t]) => slot('guide_' + id, 'Section · ' + t, 'any ratio, ~1080 wide')).join('')
         + '<p class="muted small">The Codex shows the exercise images from the "Exercise images" group for each level.</p>'],
-      ['ranks', 'Ranks: badges and avatar frames', () => E.RANKS.map((r) => slot('rank_' + r.id, `Rank badge · ${r.title} (${O.fmtNum(r.min)} Glory)`, '1:1 transparent PNG/WebP')).join('')
-        + E.RANKS.map((r) => slot('frame_' + r.id, `Avatar frame · ${r.title}`, '1:1 transparent ring, drawn over the avatar')).join('')
-        + '<p class="muted small">Empty badges are drawn automatically. A frame should be a transparent ring a bit larger than the round avatar.</p>'],
+      ['ranks', 'Ranks: frames around the avatar', () => E.RANKS.map((r) => slot('frame_' + r.id, `${E.roman(E.RANKS.indexOf(r) + 1)} · ${r.title} (from ${O.fmtNum(r.min)} Glory)`, 'wreath art, transparent')).join('')
+        + '<p class="muted small">Each rank is a wreath drawn around David\'s round avatar. The 8 frame files are prepared so the avatar sits exactly in the wreath — to replace one, send the new art to Claude to fit it the same way.</p>'],
       ['nav', 'Navigation buttons', () => E.UI_SLOTS.nav.map(([k, l]) => slot(k, l, k === 'nav_bg' ? 'wide ~1080×240' : '1:1 transparent, 256×256')).join('')],
       ['hall', 'Hall of Glory', () => E.UI_SLOTS.hall.map(([k, l]) => slot(k, l, '9:16 image or GIF')).join('')
         + E.MEDALS.map((m) => slot('medal_' + m.id, 'Medal · ' + m.title, '1:1 image or GIF')).join('')
