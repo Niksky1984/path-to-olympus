@@ -38,17 +38,21 @@
     timer: null,            // { i, t0 } — a timed set being measured
     rest: null,             // { end, total } — rest countdown between sets
     pairMsg: '',
+    warm: null,             // { i, end } — guided warm-up in progress
+    shopAsk: null,          // reward id waiting for "yes, ask"
+    test: null,             // { results:{}, clock:{ id, mode, t0, end } } — the monthly Trial being entered
   };
+  const SUBPAGES = ['avatar', 'shop', 'test', 'settings'];
 
   /* ------------------------------- shell ------------------------------- */
 
   function topbar() {
-    const back = V.tab === 'avatar';
+    const back = SUBPAGES.includes(V.tab);
     return `<header class="topbar"><div class="in">
       ${back ? '<button class="back" data-act="tab" data-tab="home" aria-label="Back">‹</button>' : O.laurelSVG(34, O.C.gold)}
       <div class="grow"><h1>PATH TO OLYMPUS</h1><div class="motto">${O.MOTTO}</div></div>
-      <button class="avatar-btn" data-act="tab" data-tab="avatar" aria-label="Change avatar">${O.avatarHTML(O.profile(), 132)}</button>
-    </div><div class="meander"></div></header>${O.demoBarHTML()}${S.error ? `<div class="error-bar">${esc(S.error)}</div>` : ''}`;
+      <button class="avatar-btn" data-act="tab" data-tab="avatar" aria-label="Change avatar">${O.loaded() ? O.avatarFramed(O.profile(), 132) : O.avatarHTML(O.profile(), 132)}</button>
+    </div><div class="meander"></div></header>${O.demoBarHTML()}${O.syncHTML()}${S.error ? `<div class="error-bar">${esc(S.error)}</div>` : ''}`;
   }
 
   /* Engraved gold icons for the medallions (replaced by media/nav_*.png when present). */
@@ -85,8 +89,9 @@
     let html = `<section class="hero ${vid || pic ? 'has-media' : ''}">
       ${vid || pic ? `<div class="hero-media" id="hero-media">${pic ? `<img src="${esc(pic)}" alt="">` : ''}</div><div class="hero-shade"></div>` : O.laurelSVG(140, O.C.gold, 0.25)}
       <div class="hero-txt"><h2>Hail, ${esc(p.name)}!</h2><div class="sub">Day ${dayNo.toLocaleString()} of 3,652 on the Path to Olympus</div>
-      <div class="nums"><div><div class="eyebrow">GLORY</div><div class="score">${O.fmtNum(p.score)}</div></div>
+      <div class="nums"><div><div class="eyebrow">GLORY ${O.rankLineHTML()}</div><div class="score">${O.fmtNum(p.score)}</div></div>
       <div class="streak">🔥 <b>${O.n0(p.currentStreak)}</b><small>day streak · best ${O.n0(p.bestStreak)}</small></div></div></div></section>`;
+    html += O.messageCard();
     html += `<div class="card">${O.section('Progress')}${O.labeled('Today', dailyText, closed ? Math.min(1, O.n0(log.pct) / 100) : st.planned ? st.points / st.planned : 0)}${O.labeled('This week', `${wk.done} / ${wk.planned} days closed`, wk.planned ? wk.done / wk.planned : 0)}</div>`;
 
     const plan = O.todayPlan();
@@ -103,6 +108,7 @@
       });
     }
     html += `<div style="margin-top:12px"><button class="btn-gold" data-act="tab" data-tab="trial">${closed ? 'Day closed — see you tomorrow' : "Log today's training"}</button></div></div>`;
+    html += O.questsCard() + (O.thisTest() ? '' : O.testHomeCard()) + O.treasuryCard();
     return html + `${O.homeGoalsCard()}<p class="motto-line">“${O.MOTTO}”</p>${O.versionHTML()}`;
   }
 
@@ -162,6 +168,12 @@
       ${plan && plan.note ? `<p class="muted">${esc(plan.note)}</p>` : ''}
       <p class="small muted">${closed ? '' : !plan || E.isRest(plan) ? 'No exercises planned today — anything you do still counts. Tap + to add one.' : 'Tap an exercise, enter what you did and press OK. You can change it until you close the day.'}</p>
       ${closed ? (log.status === 'EXCUSED' ? `<p class="muted"><b>Excused by the Council</b> — rest and recover. Your streak is safe.</p>` : `<p class="ok">Day closed · ${O.n0(log.pct)}% · +${O.fmtNum(log.points)} points. The log is locked.</p>`) : ''}</div>`;
+    if (!closed) {
+      const moves = E.parseWarmup(O.guideText('warmup'));
+      const mins = Math.max(1, Math.round(moves.reduce((a, x) => a + x.secs, 0) / 60));
+      html += `<div class="card warm-card"><div class="row"><div class="grow"><b>Warm up first · ${mins} min</b><div class="muted small">${moves.length} moves, the app counts the time for you.</div></div>
+        <button class="btn-line" data-act="warm-start">▶ Start</button></div></div>`;
+    }
     html += `<div class="tiles">${rows.map((r) => tile(r, closed)).join('')}${closed ? '' : '<button class="tile add" data-act="pick"><b>+</b><span>OTHER</span></button>'}</div>`;
     const bar = st.planned ? st.points / st.planned : st.points ? 1 : 0;
     html += `<div class="card">${O.labeled(st.planned ? 'Points vs plan' : 'Points', st.planned ? `${O.fmtNum(st.points)} / ${O.fmtNum(st.planned)} · ${st.pct}%` : `${O.fmtNum(st.points)} pts`, bar)}
@@ -190,7 +202,7 @@
     return `<div class="sheet-wrap" data-act="sheet-bg"><div class="sheet">
       <div class="row"><h3 class="grow">${esc(info.name)}</h3>${p ? O.levelBadge(p.level) : '<span class="extra-tag">EXTRA</span>'}</div>
       ${O.exerciseMediaHTML(ed.exId, d.level)}
-      <p class="small">${esc(O.guideText(E.guideExKey(ed.exId, d.level)))}</p>
+      <p class="small">${esc(O.guideText(E.guideExKey(ed.exId, d.level)))} <button class="btn-text howto-btn" data-act="howto" data-ex="${ed.exId}" data-lv="${d.level}">❔ How to do it</button></p>
       ${p ? `<div class="ex-plan">Plan: ${E.lvl(p.level).label} · ${esc(E.fmtSets(E.planEntry(p)))}</div>` : ''}
       <div class="small muted" style="margin-top:10px">Level performed</div>
       <div class="levels" style="margin-top:4px">${[1, 2, 3].map((n) => `<button class="${d.level === n ? 'on' : ''}" data-act="ed-lv" data-lv="${n}">${E.lvl(n).roman}</button>`).join('')}</div>
@@ -250,12 +262,12 @@
       });
       html += '</div>';
     });
-    return html + `<div class="center" style="margin:10px 0"><button class="btn-line" data-act="intro-replay">Replay the introduction</button></div><p class="motto-line">“${O.MOTTO}”</p>${O.versionHTML()}`;
+    return html + `<div class="center" style="margin:10px 0;display:flex;gap:8px;justify-content:center;flex-wrap:wrap"><button class="btn-line" data-act="intro-replay">Replay the introduction</button><button class="btn-line" data-act="tab" data-tab="settings">⚙ Settings</button></div><p class="motto-line">“${O.MOTTO}”</p>${O.versionHTML()}`;
   }
 
   /* ------------------------------ chronicle ------------------------------ */
 
-  const chronicle = () => O.calendarCard(V.month) + O.totalsCard() + O.recordsCard() + O.trendsCard(V.metric) + O.trajectoryCard() + O.horizonsCard();
+  const chronicle = () => O.calendarCard(V.month) + O.totalsCard() + O.recordsCard() + O.testsCard() + O.trendsCard(V.metric) + O.trajectoryCard() + O.horizonsCard();
 
   /* -------------------------------- hall -------------------------------- */
 
@@ -263,6 +275,7 @@
     const earned = Object.fromEntries(S.awards.map((a) => [a.id, a]));
     let html = `<div class="hall-head"><div class="wreath">${O.laurelSVG(150)}<b>${S.awards.length}</b></div>
       <h2>Hall of Glory</h2><p class="muted">Every medal is a step of the road you walked yourself.</p></div>`;
+    html += O.ranksCard();
     html += `<div class="card">${O.section('Medals')}<div class="medals">`;
     E.MEDALS.forEach((m, i) => {
       const got = earned[m.id];
@@ -293,7 +306,102 @@
         <label class="btn-line file-btn">📷 Choose a picture<input type="file" accept="image/*" data-change="photo"></label>
         ${shown.avatarPhoto ? '<button class="btn-text danger-text" data-act="photo-remove">Remove picture</button>' : ''}
       </div></div>
-      <button class="btn-gold" data-act="save-avatar" ${changed ? '' : 'disabled'}>Save avatar</button>`;
+      <button class="btn-gold" data-act="save-avatar" ${changed ? '' : 'disabled'}>Save avatar</button>
+      <div class="center" style="margin-top:14px"><button class="btn-line" data-act="tab" data-tab="settings">⚙ Settings</button></div>`;
+  }
+
+  /* -------------------------------- shop -------------------------------- */
+
+  function shop() {
+    const t = O.treasury();
+    const rewards = S.rewards.filter((r) => r.active !== false);
+    let html = `<div class="card center treasury-head"><div class="eyebrow-dark">YOUR TREASURY</div><div class="t-big">◎ ${O.fmtNum(t)}</div>
+      <p class="muted small">Glory you can spend. Your Glory score and rank never go down when you buy — only the treasury does.</p></div>`;
+    html += `<div class="card">${O.section('Rewards')}`;
+    html += rewards.length ? rewards.map((r) => {
+      const can = t >= O.n0(r.cost), short = O.n0(r.cost) - t;
+      return `<div class="reward ${can ? '' : 'locked'}"><span class="rw-emoji">${esc(r.emoji || '🎁')}</span><div class="grow"><b>${esc(r.title)}</b>${r.note ? `<div class="muted small">${esc(r.note)}</div>` : ''}
+        <div class="rw-cost">◎ ${O.fmtNum(r.cost)}</div>${can ? '' : O.bar(t / Math.max(1, O.n0(r.cost)), false, 'thin') + `<div class="muted tiny">${O.fmtNum(short)} more to go</div>`}</div>
+        <button class="btn-line" data-act="shop-ask" data-id="${r.id}" ${can ? '' : 'disabled'}>Ask</button></div>`;
+    }).join('') : '<p class="muted">The Council has not added rewards yet.</p>';
+    html += '</div>';
+    if (S.requests.length) {
+      const label = { PENDING: '⏳ waiting', APPROVED: '✅ approved', DECLINED: '✕ declined' };
+      html += `<div class="card">${O.section('Your requests')}${S.requests.map((q) => `<div class="req ${q.status.toLowerCase()}"><span>${esc(q.emoji || '🎁')}</span><div class="grow"><b>${esc(q.title)}</b>
+        <div class="muted tiny">${O.fmtMillis(q.at)} · ◎ ${O.fmtNum(q.cost)}${q.note ? ' · ' + esc(q.note) : ''}</div></div><span class="req-st">${label[q.status] || q.status}</span>
+        ${q.status === 'PENDING' ? `<button class="btn-text danger-text" data-act="req-cancel" data-id="${q.id}">Cancel</button>` : ''}</div>`).join('')}</div>`;
+    }
+    return html;
+  }
+  function shopSheet() {
+    const r = S.rewards.find((x) => x.id === V.shopAsk);
+    if (!r) { V.shopAsk = null; return ''; }
+    return `<div class="sheet-wrap" data-act="sheet-bg"><div class="sheet center"><div class="rw-emoji big">${esc(r.emoji || '🎁')}</div><h3>${esc(r.title)}</h3>
+      <p>Ask the Council for this reward? <b>◎ ${O.fmtNum(r.cost)}</b> Glory is kept aside until they decide. If they say no, you get it back.</p>
+      <div class="btns"><button class="btn-line" data-act="sheet-close">Not now</button><button class="btn-gold" data-act="shop-confirm">Yes, ask</button></div></div></div>`;
+  }
+
+  /* ------------------------- monthly Trial of Heracles ------------------------- */
+
+  function testPage() {
+    if (O.thisTest()) return `<div class="card center">${O.laurelSVG(90)}<h2>Done for this month</h2><p class="muted">Your results are in the Chronicle. The next Trial opens on the 1st.</p>
+      <button class="btn-gold" data-act="tab" data-tab="chronicle">See the results</button></div>`;
+    const T = V.test || (V.test = { results: {}, clock: null });
+    const prev = S.tests.slice(-1)[0] || null;
+    let html = `<div class="card center"><h2>The Trial of Heracles</h2><p class="muted small">Once a month, four tests show how much stronger you have become. Warm up first! Do the ones you can — skip the rest.</p></div>`;
+    E.TESTS.forEach((t) => {
+      const v = O.n0(T.results[t.id]), was = E.testValue(prev, t.id), clk = T.clock && T.clock.id === t.id ? T.clock : null;
+      const f = (x) => (t.mode === 'hold' ? E.fmtSecs(x) : x);
+      let tool = '';
+      if (t.mode === 'count60') tool = clk ? `<div class="test-clock"><b id="test-live">${Math.max(0, Math.ceil((clk.end - Date.now()) / 1000))}</b><small>seconds left</small><button class="chip" data-act="test-clock-stop">Stop</button></div>`
+        : `<button class="btn-line" data-act="test-clock" data-id="${t.id}">▶ Start the 1-minute clock</button>`;
+      if (t.mode === 'hold') tool = clk ? `<div class="test-clock run"><b id="test-live">${E.fmtSecs(Math.floor((Date.now() - clk.t0) / 1000))}</b><small>holding…</small><button class="btn-gold" data-act="test-clock-stop">■ Stop</button></div>`
+        : `<button class="btn-line" data-act="test-clock" data-id="${t.id}">▶ Start the stopwatch</button>`;
+      const step = t.mode === 'hold' ? 5 : 1;
+      html += `<div class="card test"><div class="row"><b class="grow">${esc(t.title)}</b>${was ? `<span class="muted small">last time ${f(was)}</span>` : ''}</div>
+        <p class="small muted">${esc(t.how)}</p>${tool}
+        <div class="test-val"><button class="sb" data-act="test-step" data-id="${t.id}" data-d="${-step}" ${v <= 0 ? 'disabled' : ''}>−</button><b>${v ? f(v) : '—'}</b><button class="sb" data-act="test-step" data-id="${t.id}" data-d="${step}">+</button>
+        ${t.mode === 'hold' ? '' : `<button class="chip" data-act="test-step" data-id="${t.id}" data-d="10">+10</button>`}</div></div>`;
+    });
+    const any = E.TESTS.some((t) => O.n0(T.results[t.id]) > 0);
+    return html + `<button class="btn-gold" data-act="test-save" ${any ? '' : 'disabled'}>Write it in the Chronicle${O.n0(S.scoring.testBonus) ? ` · +${O.fmtNum(S.scoring.testBonus)} Glory` : ''}</button>
+      <p class="muted small center">You can only do the Trial once a month — save when you have finished.</p>`;
+  }
+
+  /* ------------------------------- settings ------------------------------- */
+
+  function settingsPage() {
+    const st = O.settings();
+    const sw = (k, label, sub) => `<div class="set-line"><div class="grow"><b>${label}</b><div class="muted small">${sub}</div></div>
+      <button class="toggle ${st[k] ? 'on' : ''}" data-act="set-toggle" data-k="${k}" aria-pressed="${!!st[k]}"><i></i></button></div>`;
+    const sizes = [['normal', 'Normal'], ['large', 'Large'], ['xlarge', 'Extra large']];
+    return `<div class="card">${O.section('Settings')}
+      ${sw('sound', 'Sound', 'Beeps for timers and the sound of the celebration videos')}
+      ${sw('vibrate', 'Vibration', 'Buzz when a timer ends')}
+      ${sw('calm', 'Less animation', 'Calmer screens: no sliding, pulsing or fading')}
+      <div class="set-line col"><b>Text size</b><div class="chips">${sizes.map(([k, l]) => `<button class="chip ${st.text === k ? 'on' : ''}" data-act="set-text" data-v="${k}">${l}</button>`).join('')}</div></div>
+      <p class="muted small">These settings are saved on this phone only.</p></div>
+      <div class="center" style="margin:10px 0"><button class="btn-line" data-act="intro-replay">Replay the introduction</button></div>${O.versionHTML()}`;
+  }
+
+  /* ------------------------------ guided warm-up ------------------------------ */
+
+  function warmSheet() {
+    const moves = E.parseWarmup(O.guideText('warmup')), w = V.warm, m = moves[w.i];
+    if (!m) { V.warm = null; return ''; }
+    const left = Math.max(0, Math.ceil((w.end - Date.now()) / 1000));
+    const img = O.mediaURL('guide_warmup');
+    return `<div class="sheet-wrap" data-act="sheet-bg"><div class="sheet center warm">
+      <div class="eyebrow-dark">WARM-UP · ${w.i + 1} OF ${moves.length}</div>${img ? `<img class="warm-img" src="${esc(img)}" alt="">` : ''}
+      <h2>${esc(m.name)}</h2><div class="warm-clock"><b id="warm-live">${left}</b><small>seconds</small></div>
+      ${moves[w.i + 1] ? `<p class="muted small">Next: ${esc(moves[w.i + 1].name)}</p>` : '<p class="muted small">Last one — then the Trial!</p>'}
+      <div class="btns"><button class="btn-line" data-act="warm-stop">Stop</button><button class="btn-gold" data-act="warm-next">${moves[w.i + 1] ? 'Next ›' : 'Finish'}</button></div></div></div>`;
+  }
+  function warmNext() {
+    const moves = E.parseWarmup(O.guideText('warmup'));
+    const i = V.warm.i + 1;
+    if (i >= moves.length) { V.warm = null; keepAwake(false); O.toast('Warmed up — now the Trial!'); return; }
+    V.warm = { i, end: Date.now() + moves[i].secs * 1000 };
   }
 
   /* --------------------------- pairing (first open) --------------------------- */
@@ -332,10 +440,7 @@
   const keepAwake = async (on) => {
     try { if (on && 'wakeLock' in navigator && !wakeLock) wakeLock = await navigator.wakeLock.request('screen'); if (!on && wakeLock) { await wakeLock.release(); wakeLock = null; } } catch (e) { /* not supported */ }
   };
-  function beep() {
-    try { const a = new (window.AudioContext || window.webkitAudioContext)(); [0, 0.25].forEach((t) => { const o = a.createOscillator(), g = a.createGain(); o.frequency.value = 880; o.connect(g); g.connect(a.destination); g.gain.setValueAtTime(0.25, a.currentTime + t); o.start(a.currentTime + t); o.stop(a.currentTime + t + 0.15); }); } catch (e) { /* silent */ }
-    try { navigator.vibrate && navigator.vibrate([200, 100, 200]); } catch (e) { /* none */ }
-  }
+  const beep = () => O.beep();
   function stopSetTimer() {
     if (!V.timer || !V.edit) { V.timer = null; return; }
     const secs = Math.max(1, Math.round((Date.now() - V.timer.t0) / 1000));
@@ -350,6 +455,20 @@
       const el = document.getElementById('rest-live');
       if (left <= 0) { V.rest = null; beep(); O.toast('Rest is over — next set!'); render(); }
       else if (el) el.textContent = E.fmtSecs(left);
+    }
+    if (V.warm) {
+      const left = Math.ceil((V.warm.end - Date.now()) / 1000), el = document.getElementById('warm-live');
+      if (left <= 0) { beep(); warmNext(); render(); }
+      else if (el) el.textContent = left;
+    }
+    const clk = V.test && V.test.clock;
+    if (clk) {
+      const el = document.getElementById('test-live');
+      if (clk.mode === 'count60') {
+        const left = Math.ceil((clk.end - Date.now()) / 1000);
+        if (left <= 0) { V.test.clock = null; keepAwake(false); beep(); O.toast('Time! Enter how many you did.'); render(); }
+        else if (el) el.textContent = left;
+      } else if (el) el.textContent = E.fmtSecs(Math.floor((Date.now() - clk.t0) / 1000));
     }
   }, 250);
   function timerBar() {
@@ -367,20 +486,24 @@
       return;
     }
     if (V.intro === null && !localStorage.getItem('olympus_intro_done')) V.intro = 0;
-    const views = { home, trial, chronicle, hall, avatar, codex };
+    const views = { home, trial, chronicle, hall, avatar, codex, shop, test: testPage, settings: settingsPage };
     const bg = V.tab === 'hall' ? O.mediaURL('hall_bg') : null;
     document.body.classList.toggle('hall-bg', !!bg);
     document.body.style.backgroundImage = bg ? `url('${bg}')` : '';
     if (O.todayClosed()) { V.edit = null; V.pick = false; V.confirmClose = false; }
-    const sheet = V.intro !== null ? introScreen() : V.edit ? editorSheet() : V.pick ? pickSheet() : V.confirmClose ? confirmSheet() : '';
+    const sheet = V.intro !== null ? introScreen() : V.warm ? warmSheet() : V.shopAsk ? shopSheet() : V.edit ? editorSheet() : V.pick ? pickSheet() : V.confirmClose ? confirmSheet() : '';
     // keep an open pop-up steady: no slide-in again and same scroll position after each tap
     const old = app.querySelector('.sheet'), oldTop = old ? old.scrollTop : 0;
-    app.innerHTML = topbar() + `<main>${views[V.tab]()}</main>` + (V.tab === 'avatar' ? '' : nav()) + sheet;
+    app.innerHTML = topbar() + `<main>${views[V.tab]()}</main>` + (SUBPAGES.includes(V.tab) ? '' : nav()) + sheet;
     const now = app.querySelector('.sheet');
     if (now && old) { now.classList.add('no-anim'); now.parentElement.classList.add('no-anim'); now.scrollTop = oldTop; }
     document.body.classList.toggle('sheet-open', !!now);
     mountHeroVideo();
+    // the newest Council message counts as read once it has been on the home screen
+    const m = S.messages[0];
+    if (V.tab === 'home' && m && !m.readAt && !readSent.has(m.id) && document.querySelector('.card.message')) { readSent.add(m.id); O.markMessageRead(m.id); }
   }
+  const readSent = new Set();
 
   /* ------------------------------- events ------------------------------- */
 
@@ -391,6 +514,7 @@
     switch (d.act) {
       case 'tab':
         if (d.tab === 'avatar') V.photoDraft = undefined;
+        if (V.test && V.test.clock && d.tab !== 'test') { V.test.clock = null; keepAwake(false); }
         V.tab = d.tab; window.scrollTo(0, 0); break;
       case 'open-ex': openEditor(d.ex); break;
       case 'pick': V.pick = true; break;
@@ -425,8 +549,8 @@
       case 'ed-ok': { if (V.timer) stopSetTimer(); keepAwake(false); V.rest = null; const ed = V.edit; V.edit = null; O.updateEntry(ed.exId, (x) => ({ ...x, ...ed.draft })); return; }
       case 'ed-clear': { const ex = V.edit.exId; V.edit = null; O.updateEntry(ex, (x) => ({ ...x, perSet: [] })); return; }
       case 'ed-remove': { const ex = V.edit.exId; V.edit = null; O.removeExtra(ex); return; }
-      case 'ed-cancel': case 'sheet-close': V.timer = null; V.rest = null; keepAwake(false); V.edit = null; V.pick = false; V.confirmClose = false; break;
-      case 'sheet-bg': if (e.target !== el || V.intro !== null) return; V.timer = null; V.rest = null; keepAwake(false); V.edit = null; V.pick = false; V.confirmClose = false; break;
+      case 'ed-cancel': case 'sheet-close': V.timer = null; V.rest = null; keepAwake(false); V.edit = null; V.pick = false; V.confirmClose = false; V.shopAsk = null; break;
+      case 'sheet-bg': if (e.target !== el || V.intro !== null || V.warm) return; V.timer = null; V.rest = null; keepAwake(false); V.edit = null; V.pick = false; V.confirmClose = false; V.shopAsk = null; break;
       case 'close-day': if (O.todayStats().canClose) V.confirmClose = true; break;
       case 'close-confirm': V.confirmClose = false; O.closeToday(); break;
       case 'goto': { const t = document.getElementById(d.id); if (t) t.scrollIntoView({ behavior: 'smooth', block: 'start' }); return; }
@@ -438,6 +562,36 @@
       case 'metric': V.metric = d.metric; break;
       case 'photo-remove': V.photoDraft = null; break;
       case 'save-avatar': O.saveAvatarPhoto(V.photoDraft); V.photoDraft = undefined; V.tab = 'home'; break;
+      /* v6 */
+      case 'react': O.reactMessage(d.id, d.r); return;
+      case 'msgs-all': O.modal(O.messagesListHTML()); return;
+      case 'howto': O.modal(O.howToHTML(d.ex, +d.lv)); return;
+      case 'shop-ask': V.shopAsk = d.id; break;
+      case 'shop-confirm': { const r = S.rewards.find((x) => x.id === V.shopAsk); V.shopAsk = null; if (r) O.requestReward(r).catch((err) => O.toast('Could not send: ' + err.message)); break; }
+      case 'req-cancel': if (confirm('Cancel this request? The Glory goes back to your treasury.')) O.backend().deleteDoc('requests', d.id).catch((err) => O.toast(err.message)); return;
+      case 'test-step': { const T = V.test; T.results[d.id] = Math.max(0, O.n0(T.results[d.id]) + +d.d); break; }
+      case 'test-clock': {
+        const t = E.TESTS.find((x) => x.id === d.id);
+        V.test.clock = t.mode === 'count60' ? { id: t.id, mode: t.mode, end: Date.now() + 60000 } : { id: t.id, mode: t.mode, t0: Date.now() };
+        keepAwake(true); break;
+      }
+      case 'test-clock-stop': {
+        const c = V.test.clock; V.test.clock = null; keepAwake(false);
+        if (c && c.mode === 'hold') V.test.results[c.id] = Math.max(1, Math.round((Date.now() - c.t0) / 1000));
+        break;
+      }
+      case 'test-save': {
+        const res = Object.fromEntries(Object.entries(V.test.results).filter(([, v]) => O.n0(v) > 0));
+        if (!Object.keys(res).length) break;
+        if (!confirm('Save this month\'s Trial? You can only do it once a month.')) return;
+        if (O.saveTest(res)) { V.test = null; V.tab = 'home'; window.scrollTo(0, 0); }
+        break;
+      }
+      case 'set-toggle': O.setSetting(d.k, !O.settings()[d.k]); break;
+      case 'set-text': O.setSetting('text', d.v); break;
+      case 'warm-start': { const ms = E.parseWarmup(O.guideText('warmup')); if (ms.length) { V.warm = { i: 0, end: Date.now() + ms[0].secs * 1000 }; keepAwake(true); } break; }
+      case 'warm-next': warmNext(); break;
+      case 'warm-stop': V.warm = null; keepAwake(false); break;
       case 'demo-next': case 'demo-today': case 'demo-wipe': O.demoAction(d.act); return;
       default: return;
     }
