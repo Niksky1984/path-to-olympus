@@ -18,6 +18,7 @@
 <script src="config.js"></script>
 <script src="engine.js"></script>
 <script src="core.js"></script>
+<script src="fx.js"></script>
 <script>
 /* =============================================================================
  * David's app: Agora (home) · Trial (today's log) · Chronicle · Hall · Avatar
@@ -51,8 +52,19 @@
     return `<header class="topbar"><div class="in">
       ${back ? '<button class="back" data-act="tab" data-tab="home" aria-label="Back">‹</button>' : O.laurelSVG(34, O.C.gold)}
       <div class="grow"><h1>PATH TO OLYMPUS</h1><div class="motto">${O.MOTTO}</div></div>
-      <button class="avatar-btn" data-act="tab" data-tab="avatar" aria-label="Change avatar">${O.loaded() ? O.avatarFramed(O.profile(), 104) : O.avatarHTML(O.profile(), 132)}</button>
+      ${avatarBtn()}
     </div><div class="meander"></div></header>${O.demoBarHTML()}${O.syncHTML()}${S.error ? `<div class="error-bar">${esc(S.error)}</div>` : ''}`;
+  }
+
+  /**
+   * The avatar in its rank wreath. It is a little taller than the top bar: the wreath hangs over the
+   * bar's lower edge (the avatar's lightning aura is drawn around it by fx.js).
+   */
+  function avatarBtn() {
+    const D = Math.round(Math.min(150, Math.max(112, innerWidth * 0.31)));
+    if (!O.loaded()) return `<button class="avatar-btn" data-act="tab" data-tab="avatar" aria-label="Change avatar">${O.avatarHTML(O.profile(), D)}</button>`;
+    return `<button class="avatar-btn big" data-act="tab" data-tab="avatar" aria-label="Change avatar" style="width:${Math.round(D * 1.3)}px;height:${Math.round(D * 0.78)}px">
+      <span class="av-hang">${O.rankFrameHTML(O.rank().idx, D)}</span></button>`;
   }
 
   /* Engraved gold icons for the medallions (replaced by media/nav_*.png when present). */
