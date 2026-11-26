@@ -75,6 +75,32 @@ service cloud.firestore {
       match /overrides/{date}     { allow read: if member(); allow write: if isAdmin(); }
       match /targets/{horizon}    { allow read: if member(); allow write: if isAdmin(); }
       match /config/{docId}       { allow read: if member(); allow write: if isAdmin(); }
+      match /rewards/{id}         { allow read: if member(); allow write: if isAdmin(); }
+
+      // Quests: the Admin writes them; David's phone may only mark one as claimed.
+      match /quests/{id} {
+        allow read: if member();
+        allow create, delete: if isAdmin();
+        allow update: if isAdmin() || (isDavid() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['claimedAt', 'celebrated']));
+      }
+      // Shop requests: David asks (always PENDING), the Admin decides; David may cancel a pending one.
+      match /requests/{id} {
+        allow read: if member();
+        allow create: if member() && request.resource.data.status == 'PENDING';
+        allow update: if isAdmin();
+        allow delete: if isAdmin() || (isDavid() && resource.data.status == 'PENDING');
+      }
+      // Messages from the Council: David may only react and mark them read.
+      match /messages/{id} {
+        allow read: if member();
+        allow create, delete: if isAdmin();
+        allow update: if isAdmin() || (isDavid() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reaction', 'readAt']));
+      }
+      // Monthly Trial of Heracles results.
+      match /tests/{id} {
+        allow read, create, update: if member();
+        allow delete: if isAdmin();
+      }
     }
   }
 }
