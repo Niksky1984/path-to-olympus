@@ -51,7 +51,7 @@
     return `<header class="topbar"><div class="in">
       ${back ? '<button class="back" data-act="tab" data-tab="home" aria-label="Back">‹</button>' : O.laurelSVG(34, O.C.gold)}
       <div class="grow"><h1>PATH TO OLYMPUS</h1><div class="motto">${O.MOTTO}</div></div>
-      <button class="avatar-btn" data-act="tab" data-tab="avatar" aria-label="Change avatar">${O.loaded() ? O.avatarFramed(O.profile(), 132) : O.avatarHTML(O.profile(), 132)}</button>
+      <button class="avatar-btn" data-act="tab" data-tab="avatar" aria-label="Change avatar">${O.loaded() ? O.avatarFramed(O.profile(), 104) : O.avatarHTML(O.profile(), 132)}</button>
     </div><div class="meander"></div></header>${O.demoBarHTML()}${O.syncHTML()}${S.error ? `<div class="error-bar">${esc(S.error)}</div>` : ''}`;
   }
 
