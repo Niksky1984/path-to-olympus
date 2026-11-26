@@ -696,3 +696,14 @@ i.hm.sk { background: var(--lost); } i.hm.ex { background: #CFC8BA; }
   body { background: #fff !important; }
 }
 .reward .bar + .tiny { margin-top: 3px; }
+
+/* v6.2: big avatar hanging over the top bar's edge */
+.topbar .avatar-btn.big { position: relative; flex: 0 0 auto; align-self: flex-start; overflow: visible; border-radius: 0; z-index: 2; }
+.topbar .avatar-btn.big .av-hang { position: absolute; left: 50%; top: 0; transform: translateX(-50%); line-height: 0; }
+.topbar .avatar-btn.big .rank-frame { filter: drop-shadow(0 6px 14px rgba(0,0,0,.45)); }
+.fx-preview { display: flex; justify-content: center; padding: 10px 0 0; background: radial-gradient(circle at 50% 40%, #6B4119, #2A1A0A 75%); border-radius: 14px; margin-bottom: 10px; }
+.fx-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--vein); }
+.fx-row:last-child { border-bottom: 0; }
+.fx-row input[type=range] { flex: 1; accent-color: var(--gold-deep); }
+.fx-row .fx-v { width: 44px; text-align: right; font-weight: 700; font-size: 13px; }
+.fx-row .fx-l { width: 120px; font-size: 14px; }
