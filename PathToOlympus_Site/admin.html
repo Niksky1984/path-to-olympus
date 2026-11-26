@@ -17,6 +17,7 @@
 <script src="config.js"></script>
 <script src="engine.js"></script>
 <script src="core.js"></script>
+<script src="fx.js"></script>
 <script>
 /* =============================================================================
  * Admin console: PIN → Overview · Plans · Targets · Scoring · Media · Guide · Settings
@@ -235,6 +236,45 @@
     return O.testsCard() + `<div class="card"><p class="muted small">Remove a test (for example if it was entered by mistake): David can then take it again this month.</p>${S.tests.slice().reverse().map((t) => `<button class="btn-text danger-text" data-act="test-del" data-id="${t.id}">✕ ${t.id}</button>`).join(' ')}</div>`;
   }
   const insightsTab = () => progressionCard() + O.weekdayCard() + O.heatmapCard() + testsAdminCard() + reportCard();
+
+  /* -------------------------------- effects -------------------------------- */
+
+  const FX_EVENTS = [['close', 'Day closed'], ['medal', 'Medal / coat of arms'], ['rank', 'New rank'], ['record', 'Personal record'], ['quest', 'Quest complete'], ['test', 'Monthly Trial'], ['lost', 'Day lost']];
+  function fxDraft() {
+    if (!A.fxDraft) {
+      const D = window.OlympusFX ? window.OlympusFX.DEFAULTS : {};
+      A.fxDraft = { ...clone(D), ...clone(S.fx || {}), events: { ...clone(D.events || {}), ...clone((S.fx || {}).events || {}) } };
+    }
+    window.__fxDraft = A.fxDraft;   // the preview uses the draft live
+    return A.fxDraft;
+  }
+  function effectsTab() {
+    const f = fxDraft();
+    const sw = (k, label, sub) => `<div class="set-line"><div class="grow"><b>${label}</b>${sub ? `<div class="muted small">${sub}</div>` : ''}</div><button class="toggle ${f[k] ? 'on' : ''}" data-act="fx-toggle" data-k="${k}"><i></i></button></div>`;
+    const sl = (k, label, min, max, step, unit) => `<div class="fx-row"><span class="fx-l">${label}</span><input type="range" min="${min}" max="${max}" step="${step}" value="${esc(f[k])}" data-bind="fx" data-f="${k}"><span class="fx-v" id="fxv-${k}">${esc(f[k])}${unit || ''}</span></div>`;
+    const colors = [['electric', '⚡ Electric blue'], ['gold', '✦ Zeus gold'], ['violet', '☄ Titan violet'], ['rank', '◎ Rank colour']];
+    return `<div class="card">${O.section('Lightning around the avatar')}
+      <div class="fx-preview fx-anchor">${O.rankFrameHTML(O.rank().idx, 110, null, false, true)}</div>
+      ${sw('aura', 'Lightning aura', 'An electric ring with sparks and strikes around David\'s avatar')}
+      ${sl('auraPower', 'Intensity', 0, 100, 5, '')}
+      ${sl('auraRate', 'Strikes / min', 1, 40, 1, '')}
+      <div class="fx-row"><span class="fx-l">Colour</span><div class="chips" style="flex-wrap:wrap">${colors.map(([k, l]) => `<button class="chip ${f.color === k ? 'on' : ''}" data-act="fx-color" data-v="${k}">${l}</button>`).join('')}</div></div>
+      ${sw('auraSound', 'Thunder with aura strikes', 'Quiet rumble each time lightning hits the avatar')}
+      <button class="btn-line" data-act="fx-strike" style="margin-top:8px">⚡ Test a strike</button></div>
+      <div class="card">${O.section('Storm on big moments')}
+      ${sw('storm', 'Storms', 'Full-screen lightning, flashes, rain and thunder')}
+      ${sl('stormPower', 'Power', 0, 100, 5, '')}
+      ${sl('stormSecs', 'Duration', 2, 10, 0.5, ' s')}
+      ${sl('shake', 'Screen shake', 0, 100, 5, '')}
+      ${sl('volume', 'Thunder volume', 0, 100, 5, '')}
+      ${sw('stormSound', 'Thunder sound', '')}
+      ${sw('vibrate', 'Vibration', 'Phone buzzes with each strike (Android phones)')}
+      <div class="muted small" style="margin:10px 0 4px">A storm comes with:</div>
+      <div class="chips" style="flex-wrap:wrap">${FX_EVENTS.map(([k, l]) => `<button class="chip ${f.events[k] ? 'on' : ''}" data-act="fx-event" data-k="${k}">${f.events[k] ? '✓ ' : ''}${l}</button>`).join('')}</div>
+      <button class="btn-line" data-act="fx-storm" style="margin-top:12px">🌩 Test the storm</button></div>
+      <button class="btn-gold" data-act="fx-save">Save effects</button>
+      <p class="muted small center">David's own Sound / Vibration switches (in his Settings) can still silence his phone.</p>`;
+  }
 
   /* ------------------------------- day editor ------------------------------- */
 
@@ -481,8 +521,8 @@
     else if (A.dayEdit) body = dayEditCard();
     else {
       const pend = S.requests.filter((r) => r.status === 'PENDING').length;
-      const tabs = [['overview', 'Overview'], ['plans', 'Plans'], ['quests', 'Quests'], ['shop', pend ? `Shop (${pend})` : 'Shop'], ['insights', 'Insights'], ['targets', 'Targets'], ['scoring', 'Scoring'], ['media', 'Media'], ['guide', 'Guide'], ['settings', 'Settings']];
-      const views = { overview, plans: plansTab, quests: questsTab, shop: shopTab, insights: insightsTab, targets: targetsTab, scoring: scoringTab, media: mediaTab, guide: guideTab, settings: settingsTab };
+      const tabs = [['overview', 'Overview'], ['plans', 'Plans'], ['quests', 'Quests'], ['shop', pend ? `Shop (${pend})` : 'Shop'], ['insights', 'Insights'], ['targets', 'Targets'], ['scoring', 'Scoring'], ['media', 'Media'], ['guide', 'Guide'], ['effects', 'Effects'], ['settings', 'Settings']];
+      const views = { overview, plans: plansTab, quests: questsTab, shop: shopTab, insights: insightsTab, targets: targetsTab, scoring: scoringTab, media: mediaTab, guide: guideTab, effects: effectsTab, settings: settingsTab };
       body = `<div class="subtabs">${tabs.map(([k, l]) => `<button class="${A.sub === k ? 'on' : ''}" data-act="sub" data-sub="${k}">${l}</button>`).join('')}</div><div style="height:12px"></div>${views[A.sub]()}`;
     }
     app.innerHTML = topbar() + `<main style="padding-bottom:40px">${body}</main>`
@@ -507,6 +547,7 @@
     else if (d.bind === 's-name') A.settings.name = el.value;
     else if (d.bind === 'de-reason') A.dayEdit.reason = el.value;
     else if (d.bind === 'guide') A.guideDraft[d.key] = el.value;
+    else if (d.bind === 'fx') { fxDraft()[d.f] = +el.value; const v = document.getElementById('fxv-' + d.f); if (v) v.textContent = el.value + (d.f === 'stormSecs' ? ' s' : ''); }
     else if (d.bind === 'q') A.questDraft[d.f] = d.f === 'title' ? el.value : el.value.replace(/[^0-9]/g, '');
     else if (d.bind === 'rw') A.rewardDraft[d.f] = d.f === 'cost' ? el.value.replace(/[^0-9]/g, '') : el.value;
     else if (d.bind === 'sc') {
@@ -589,7 +630,7 @@
         O.ADMIN.lock(); try { await be.forgetAdmin(S.user.uid); } catch (err) { console.warn(err); } await O.ADMIN.refresh(); break;
 
       /* navigation */
-      case 'sub': A.sub = d.sub; A.settings = null; A.questDraft = null; A.report = false; A.targetDrafts = {}; A.scDraft = null; A.guideDraft = null; window.scrollTo(0, 0); break;
+      case 'sub': A.sub = d.sub; A.settings = null; A.questDraft = null; A.report = false; A.fxDraft = null; window.__fxDraft = null; A.targetDrafts = {}; A.scDraft = null; A.guideDraft = null; window.scrollTo(0, 0); break;
       case 'guide-save': {
         const texts = Object.fromEntries(Object.entries(A.guideDraft || {}).map(([k, v]) => [k, String(v || '').trim()]));
         await O.adminOp('Codex text saved', () => be.saveGuide(texts)); A.guideDraft = null; break;
@@ -761,6 +802,13 @@
       case 'rp-open': A.report = true; window.scrollTo(0, 0); break;
       case 'rp-close': A.report = false; break;
       case 'rp-print': window.print(); return;
+      /* effects */
+      case 'fx-toggle': fxDraft()[d.k] = !fxDraft()[d.k]; break;
+      case 'fx-color': fxDraft().color = d.v; break;
+      case 'fx-event': fxDraft().events[d.k] = !fxDraft().events[d.k]; break;
+      case 'fx-strike': window.OlympusFX && window.OlympusFX.strikeNow(); return;
+      case 'fx-storm': window.OlympusFX && window.OlympusFX.storm('preview', true); return;
+      case 'fx-save': await O.adminOp('Effects saved — David\'s phone uses them right away', () => be.saveEffects(clone(fxDraft()))); break;
       case 'demo-next': case 'demo-today': case 'demo-wipe': O.demoAction(d.act); return;
       default: return;
     }
