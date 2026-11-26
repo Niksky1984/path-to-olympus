@@ -562,11 +562,16 @@ nav.tabs button.on .medallion.has-img { box-shadow: none; border-radius: 50%; fi
 .sync-pill.off { background: #F3E3D3; border-color: var(--bronze-light); }
 
 /* ranks */
-.av-frame { position: relative; display: inline-block; border-radius: 50%; line-height: 0; box-shadow: 0 0 0 3px var(--rc), 0 0 0 5px rgba(201,162,39,.55); }
-.av-frame.r4, .av-frame.r5, .av-frame.r6 { box-shadow: 0 0 0 3px var(--rc), 0 0 0 6px var(--gold), 0 0 14px rgba(201,162,39,.6); }
-.av-frame.r7 { box-shadow: 0 0 0 4px var(--gold-light), 0 0 0 8px var(--gold), 0 0 22px rgba(233,210,127,.9); }
-.av-frame > img.avatar-photo, .av-frame > svg { border-radius: 50%; }
-.av-frame .frame-img { position: absolute; inset: -14%; width: 128%; height: 128%; pointer-events: none; }
+.rf-fit { display: inline-flex; justify-content: center; align-items: flex-start; flex: none; line-height: 0; }
+.rank-frame { position: relative; display: inline-block; flex: none; line-height: 0; border-radius: 50%; }
+.rank-frame > .avatar-photo, .rank-frame > svg.avatar { width: 100% !important; height: 100% !important; border-radius: 50%; display: block; }
+.rank-frame .rf-img { position: absolute; left: -37.5%; top: 0; width: 175%; height: auto; max-width: none; pointer-events: none; }
+.rank-frame.plain { box-shadow: 0 0 0 3px var(--rc), 0 0 0 5px rgba(201,162,39,.55); }
+.rank-frame .rf-empty { display: block; width: 100%; height: 100%; border-radius: 50%; background: rgba(123,74,30,.1); border: 2px dashed var(--vein); box-sizing: border-box; }
+.rank-frame.locked .rf-img { filter: grayscale(1); opacity: .4; }
+.rank-now { display: flex; flex-direction: column; align-items: center; text-align: center; margin-bottom: 10px; }
+.rank-now h3 { margin: 2px 0 6px; }
+.rank-now .bar { width: 100%; }
 .rank-line { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 4px; }
 .hero .eyebrow .rank-name { margin-left: 6px; vertical-align: 1px; }
 .rank-name { font-family: var(--serif); font-weight: 700; font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: #fff; background: var(--rc); border: 1px solid var(--gold-light); border-radius: 999px; padding: 1px 8px; text-shadow: none; }
